@@ -586,3 +586,235 @@ css_template = custom
 ## 许可证
 
 MIT
+
+## 最新功能开发记录
+
+### 文本清理功能增强 (v0.2.0)
+
+在PDF2Epub v0.2.0版本中，我们对文本清理功能进行了重要增强，特别针对学术文献、教材和专业书籍的特殊排版需求。
+
+#### 1. 页码和章节标题移除
+
+学术文献通常在页面左上角包含页码和章节标题，这些内容在EPUB中是多余的。我们实现了智能检测和移除这些元素的功能：
+
+```python
+def remove_page_headers(self, text):
+    """移除页面左上角的页码和章节标题"""
+    # 分割为段落
+    paragraphs = text.split('\n\n')
+    cleaned_paragraphs = []
+    
+    for para in paragraphs:
+        # 检测多种页码和章节标题模式
+        # 模式1: 数字 + 空格 + 章节名 (如 "2 海德格尔《哲学献文》导论")
+        if re.match(r'^\d+\s+[\u4e00-\u9fa5《》""''（）\[\]]+.*?[》」"）\]\.\。]', para):
+            # 查找第一个句号，从句号后开始保留文本
+            match = re.search(r'[。？！\.]\s*', para)
+            if match:
+                end_pos = match.end()
+                if end_pos < len(para):
+                    para = para[end_pos:].strip()
+                else:
+                    continue
+        
+        # 其他模式处理...
+        
+        if para.strip():
+            cleaned_paragraphs.append(para)
+    
+    return '\n\n'.join(cleaned_paragraphs)
+```
+
+支持的页码和章节标题模式：
+- 数字+章节名：如 "2 海德格尔《哲学献文》导论"
+- 罗马数字+章节名：如 "IV 存在与时间"
+- 字母+章节名：如 "A 基础概念"
+- 章节标题+页码：如 "第一章 存在与时间 23"
+
+#### 2. 脚注标记格式化
+
+学术文献中的脚注标记（如①②③、[1]、(1)等）需要特殊处理以保持可读性：
+
+```python
+def format_footnote_markers(self, text):
+    """将脚注标记转换为上标格式"""
+    # 处理圆圈数字脚注标记
+    circle_numbers = {
+        '①': '1', '②': '2', '③': '3', '④': '4', '⑤': '5',
+        '⑥': '6', '⑦': '7', '⑧': '8', '⑨': '9', '⑩': '10'
+    }
+    
+    # 替换为HTML上标
+    for circle, number in circle_numbers.items():
+        text = text.replace(circle, f'<sup>{number}</sup>')
+    
+    # 处理其他脚注格式
+    footnote_patterns = [
+        (r'\[(\d+)\]', r'<sup>\1</sup>'),  # [1] -> <sup>1</sup>
+        (r'\((\d+)\)', r'<sup>\1</sup>'),  # (1) -> <sup>1</sup>
+        # 其他模式...
+    ]
+    
+    # 脚注区域处理
+    # ...
+    
+    return text
+```
+
+支持的脚注标记格式：
+- 圆圈数字：①②③④⑤⑥⑦⑧⑨⑩
+- 方括号数字：[1], [2], [3]
+- 圆括号数字：(1), (2), (3)
+- 星号数字：*1, *2, *3
+- 其他特殊符号：†1, †2, †3
+
+#### 3. 实现思路与设计决策
+
+1. **模块化设计**：将不同的文本清理功能拆分为独立方法，便于维护和扩展
+2. **正则表达式优化**：使用精心设计的正则表达式，平衡匹配精度和性能
+3. **HTML标准兼容**：使用标准HTML元素（如`<sup>`）确保在各种EPUB阅读器中正确显示
+4. **保守处理原则**：在无法确定的情况下，保留原始文本而非错误删除
+
+#### 4. 测试与验证
+
+为确保功能稳定性，我们使用了多种学术文献样本进行测试：
+- 哲学文献（如海德格尔著作）
+- 科学教材（包含大量公式和脚注）
+- 历史文献（包含特殊章节标记）
+
+#### 5. 未来改进方向
+
+- 添加更多脚注格式识别模式
+- 实现脚注内容与引用的自动链接
+- 优化对多语言文献的支持
+- 添加对数学公式的特殊处理
+
+#### 6. 使用建议
+
+对于处理学术文献，建议使用以下命令行参数：
+```bash
+python main.py input.pdf -o output.epub --academic-mode
+```
+
+`--academic-mode`参数将启用所有针对学术文献的优化处理。
+
+### 交互式界面优化 (v0.2.0)
+
+在PDF2Epub v0.2.0版本中，我们对交互式界面进行了多项优化，提升了用户体验和错误处理能力。
+
+#### 1. 用户取消操作处理
+
+为了提供更友好的用户体验，我们增强了对用户取消操作的处理：
+
+```python
+def select_pdf_file(pdf_files):
+    """
+    交互式选择PDF文件
+    """
+    questions = [
+        inquirer.List('pdf_file',
+                     message='选择要转换的PDF文件',
+                     choices=pdf_files)
+    ]
+    
+    answers = inquirer.prompt(questions)
+    
+    # 处理用户取消操作
+    if answers is None:
+        print("\n操作已取消。")
+        sys.exit(0)
+        
+    return answers['pdf_file']
+```
+
+主要改进包括：
+- 在每个`inquirer.prompt`调用后检查返回值是否为`None`（表示用户取消）
+- 当用户取消时，显示友好的提示信息："操作已取消。"
+- 优雅地退出程序（`sys.exit(0)`）
+
+#### 2. 键盘中断处理
+
+我们添加了对`KeyboardInterrupt`的捕获，确保用户可以随时安全地中断程序：
+
+```python
+def main():
+    """
+    主函数 - 交互式转换入口
+    """
+    print("=== PDF2Epub 交互式转换工具 v0.2.0 ===\n")
+    
+    try:
+        # 获取PDF文件列表
+        pdf_files = get_pdf_files()
+        
+        # 选择PDF文件
+        input_path = select_pdf_file(pdf_files)
+        
+        # ...其他操作...
+        
+    except KeyboardInterrupt:
+        print("\n\n操作已取消。")
+        sys.exit(0)
+```
+
+#### 3. 进度条显示优化
+
+为了提供更清晰的转换进度信息，我们优化了进度条显示：
+
+```python
+def process_pdf(input_path, output_path, max_pages=None, verbose=0, debug=False):
+    # ...前置代码...
+    
+    # 创建进度条
+    with tqdm(total=total_pages, desc=f"📊 转换进度 (页 0/{total_pages})", 
+              bar_format="{desc}: {percentage:3.0f}%|{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]") as pbar:
+        
+        for page_num, page in enumerate(pdf_document, 1):
+            # 更新进度条描述
+            if use_ocr:
+                pbar.set_description(f"📊 转换进度 (页 {page_num}/{total_pages}, 已用tokens: {token_usage})")
+            else:
+                pbar.set_description(f"📊 转换进度 (页 {page_num}/{total_pages})")
+            
+            # 处理页面...
+            
+            # 更新进度条
+            pbar.update(1)
+```
+
+主要改进：
+- 简化信息模式下的输出，移除了每页处理时的单独日志输出
+- 在进度条描述中集成了当前页码、总页数和token使用信息
+- 保持界面简洁，只显示进度条和必要信息
+
+#### 4. 日志级别统一
+
+我们统一了日志级别的描述，使其更加直观：
+
+```python
+questions = [
+    inquirer.List('log_level',
+                 message='选择日志级别',
+                 choices=[
+                     ('基础级别 - 只显示警告和错误', 'user'),
+                     ('信息级别 - 显示处理进度和基本统计信息', 'info'),
+                     ('开发级别 - 显示详细技术信息', 'dev'),
+                     ('调试模式 - 最详细的诊断信息', 'debug')
+                 ],
+                 default='user')
+]
+```
+
+#### 5. 实现思路与设计决策
+
+1. **防御性编程**：在所有用户交互点添加错误处理，确保程序不会因用户操作而崩溃
+2. **一致的用户体验**：统一错误消息和提示风格，提供清晰的反馈
+3. **渐进式信息展示**：根据用户选择的日志级别，提供不同详细程度的信息
+4. **简洁界面设计**：减少不必要的输出，让用户专注于重要信息
+
+#### 6. 未来改进方向
+
+- 添加配置保存功能，记住用户的偏好设置
+- 实现批处理模式，允许用户一次选择多个文件进行转换
+- 添加转换后的预览功能
+- 提供更详细的错误诊断和解决建议

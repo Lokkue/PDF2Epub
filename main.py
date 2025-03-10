@@ -11,16 +11,22 @@ import argparse
 import logging
 import configparser
 import time
+import json
 from datetime import datetime
 import cv2
 import numpy as np
 from tqdm import tqdm
+import re
+from pathlib import Path
+from PIL import Image
 
 # 导入核心模块
 from core.pdf_parser import PDFParser
 from core.ocr_processor import OCRProcessor
 from core.epub_builder import EPUBBuilder
 from core.page_processors import PROCESSOR_REGISTRY
+from core.text_cleaner import TextCleaner
+from core.enhanced_text_processor import EnhancedTextProcessor
 
 # 导入工具模块
 from utils.cache import CacheManager
@@ -198,17 +204,43 @@ def predict_page_type(image, text=None):
         text: 已有的文本内容（如果有）
         
     返回:
-        str: 页面类型（"text", "toc", "table", "footnote", "image_caption", "academic"）
+        str: 页面类型（"text", "toc", "table", "footnote", "image_caption", "academic", 
+             "cover", "publication_info", "preface", "afterword"）
     """
     # 如果已有文本，基于文本内容进行简单规则判断
     if text and len(text) > 10:
+        text_lower = text.lower()
+        
+        # 检测封面页
+        cover_markers = ["封面", "书名", "著", "编著", "主编", "出版社"]
+        if (sum(marker in text for marker in cover_markers) >= 2 and 
+            len(text) < 200 and text.isupper() or "出版" in text):
+            return "cover"
+        
+        # 检测出版信息页
+        pub_markers = ["版权", "Copyright", "ISBN", "印刷", "CIP", "书号", "定价", "版次", "印次"]
+        if sum(marker in text for marker in pub_markers) >= 2:
+            return "publication_info"
+        
+        # 检测前言页
+        preface_markers = ["前言", "序言", "序", "绪言", "引言", "编者的话", "编者按", "Preface", "Introduction"]
+        if any(marker in text[:200] for marker in preface_markers) and len(text) > 300:
+            return "preface"
+        
+        # 检测后记页
+        afterword_markers = ["后记", "跋", "结语", "编后语", "Afterword", "Epilogue"]
+        if any(marker in text[:200] for marker in afterword_markers) and len(text) > 200:
+            return "afterword"
+        
         # 检测目录页
-        if "目录" in text[:100] or "CONTENTS" in text[:100].upper() or "索引" in text[:100]:
+        if ("目录" in text[:100] or "CONTENTS" in text[:100].upper() or "索引" in text[:100] or
+            (text.count("…") > 3 and sum(c.isdigit() for c in text) > 10)):
             return "toc"
         
         # 检测表格页
         table_markers = ["表", "Table", "表格", "一览表"]
-        if any(marker in text[:200] for marker in table_markers) and sum(c.isdigit() for c in text[:200]) > 5:
+        if (any(marker in text[:200] for marker in table_markers) and 
+            sum(c.isdigit() for c in text[:200]) > 5) or text.count("|") > 5 or text.count("\t") > 5:
             return "table"
         
         # 检测脚注页
@@ -226,8 +258,9 @@ def predict_page_type(image, text=None):
         if any(marker in text for marker in academic_markers):
             return "academic"
     
-    # 基于图像特征进行简单判断（这里可以添加更复杂的图像分析）
-    # 例如，检测表格线条、检测图片区域等
+    # 基于图像特征进行简单判断
+    # 这里可以添加更复杂的图像分析逻辑
+    # 例如，使用OpenCV检测表格线条、检测图片区域等
     
     # 默认为普通文本
     return "text"
@@ -335,6 +368,7 @@ def process_pdf(args, config, logger):
                 logger.debug(f"使用缓存: 页码 {page_num+1}")
                 processed_text = cache['processed_text']
                 page_type = cache['page_type']
+                metadata = cache.get('metadata', {})
             else:
                 # 获取页面图像
                 image_data = pdf_parser.extract_image(page_num)
@@ -385,7 +419,7 @@ def process_pdf(args, config, logger):
                 else:
                     image_for_processing = image_data
                 
-                processed_text, page_type = process_page(image_for_processing, text)
+                processed_text, page_type, metadata = process_page(image_for_processing, text, predicted_page_type)
                 
                 # 保存缓存
                 cache_manager.save_page_cache(
@@ -393,11 +427,12 @@ def process_pdf(args, config, logger):
                     page_num=page_num,
                     ocr_text=text,
                     processed_text=processed_text,
-                    page_type=page_type
+                    page_type=page_type,
+                    metadata=metadata
                 )
             
             # 添加到EPUB
-            epub_builder.add_page(processed_text, page_type)
+            epub_builder.add_page(processed_text, page_type, metadata)
             
             # 创建检查点
             cache_manager.save_checkpoint(task_id, page_num)
@@ -442,16 +477,17 @@ def process_pdf(args, config, logger):
         pdf_parser.close()
 
 
-def process_page(image, text):
+def process_page(image, text, page_type="text"):
     """
     处理页面内容
     
     参数:
         image: 页面图像（字节数据或图像对象）
         text: 页面文本
+        page_type: 页面类型
         
     返回:
-        tuple: (处理后的HTML内容, 页面类型)
+        tuple: (处理后的HTML内容, 页面类型, 提取的元数据)
     """
     # 检查图像是否为字节数据，如果是则解码
     if isinstance(image, bytes):
@@ -463,33 +499,39 @@ def process_page(image, text):
         except Exception as e:
             logger.error(f"图像解码失败: {e}")
             # 如果解码失败，返回空白页
-            return "<div class='page'><p>图像处理失败</p></div>", "blank"
+            return "<div class='page'><p>图像处理失败</p></div>", "blank", {}
     
-    # 检测页面类型
-    best_processor = None
-    best_confidence = 0
+    # 使用增强型文本处理器处理文本
+    enhanced_processor = EnhancedTextProcessor()
+    processed_html, metadata = enhanced_processor.process(text, page_type)
     
-    for processor_class in PROCESSOR_REGISTRY:
-        confidence = processor_class.detect(image, text)
-        if confidence > best_confidence:
-            best_confidence = confidence
-            best_processor = processor_class
+    # 如果没有成功处理，使用普通处理器作为备用方案
+    if not processed_html:
+        # 检测页面类型
+        best_processor = None
+        best_confidence = 0
+        
+        for processor_class in PROCESSOR_REGISTRY:
+            confidence = processor_class.detect(image, text)
+            if confidence > best_confidence:
+                best_confidence = confidence
+                best_processor = processor_class
+        
+        # 使用最佳处理器
+        if best_processor and best_confidence > 0.5:
+            processor = best_processor(image, text)
+            page_type = best_processor.__name__.replace('Processor', '').lower()
+            logger.debug(f"使用 {page_type} 处理器 (置信度: {best_confidence:.2f})")
+        else:
+            # 使用默认处理器
+            processor = PROCESSOR_REGISTRY[-1](image, text)
+            page_type = 'base'
+            logger.debug(f"使用默认处理器")
+        
+        # 处理页面
+        processed_html = processor.process()
     
-    # 使用最佳处理器
-    if best_processor and best_confidence > 0.5:
-        processor = best_processor(image, text)
-        page_type = best_processor.__name__.replace('Processor', '').lower()
-        logger.debug(f"使用 {page_type} 处理器 (置信度: {best_confidence:.2f})")
-    else:
-        # 使用默认处理器
-        processor = PROCESSOR_REGISTRY[-1](image, text)
-        page_type = 'base'
-        logger.debug(f"使用默认处理器")
-    
-    # 处理页面
-    processed_html = processor.process()
-    
-    return processed_html, page_type
+    return processed_html, page_type, metadata
 
 
 def main():

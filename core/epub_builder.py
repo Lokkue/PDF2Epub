@@ -56,12 +56,31 @@ class EPUBBuilder:
         self.language = "zh-CN"
         self.identifier = f"urn:uuid:{uuid.uuid4()}"
         self.date = datetime.now().strftime("%Y-%m-%d")
+        self.publisher = ""
+        self.description = ""
+        self.isbn = ""
         
         # 初始化章节列表
         self.chapters = []
         
+        # 初始化目录条目
+        self.toc_entries = []
+        
         # 初始化图像计数器
         self.image_counter = 0
+        
+        # 记录已处理的页面类型，用于特殊页面的识别
+        self.processed_page_types = {
+            "cover": False,
+            "publication_info": False,
+            "toc": False,
+            "preface": False,
+            "afterword": False
+        }
+        
+        # 跟踪章节和小节结构
+        self.current_chapter = ""
+        self.current_section = ""
         
         logger.info(f"初始化EPUB构建器: 格式={format}, 模板={css_template}")
     
@@ -78,6 +97,50 @@ class EPUBBuilder:
         self.author = author
         self.language = language
         logger.debug(f"设置元数据: 标题={title}, 作者={author}")
+    
+    def add_metadata(self, metadata):
+        """
+        添加元数据
+        
+        参数:
+            metadata: 元数据字典
+        """
+        if not metadata:
+            return
+            
+        # 更新书籍基本信息
+        if "title" in metadata and metadata["title"]:
+            self.title = metadata["title"]
+            logger.debug(f"更新书名: {self.title}")
+            
+        if "author" in metadata and metadata["author"]:
+            self.author = metadata["author"]
+            logger.debug(f"更新作者: {self.author}")
+            
+        if "publisher" in metadata and metadata["publisher"]:
+            self.publisher = metadata["publisher"]
+            logger.debug(f"更新出版社: {self.publisher}")
+            
+        if "isbn" in metadata and metadata["isbn"]:
+            self.isbn = metadata["isbn"]
+            logger.debug(f"更新ISBN: {self.isbn}")
+            
+        # 处理目录条目
+        if "toc_entries" in metadata and metadata["toc_entries"]:
+            for entry in metadata["toc_entries"]:
+                if entry not in self.toc_entries:
+                    self.toc_entries.append(entry)
+                    logger.debug(f"添加目录条目: {entry['title']} (页码: {entry.get('page', 'N/A')})")
+                    
+        # 记录章节信息
+        if "chapter" in metadata and metadata["chapter"]:
+            self.current_chapter = metadata["chapter"]
+            logger.debug(f"记录当前章节: {self.current_chapter}")
+            
+        # 记录小节信息
+        if "section" in metadata and metadata["section"]:
+            self.current_section = metadata["section"]
+            logger.debug(f"记录当前小节: {self.current_section}")
     
     def add_chapter(self, title, content, level=1):
         """
@@ -194,7 +257,7 @@ class EPUBBuilder:
             self.epub.writestr("OEBPS/content.opf", content_opf)
             
             # 写入toc.ncx文件
-            toc_ncx = self.generate_toc()
+            toc_ncx = self.generate_toc_ncx()
             self.epub.writestr("OEBPS/toc.ncx", toc_ncx)
             
             # 创建images目录（如果有图像）
@@ -228,7 +291,17 @@ class EPUBBuilder:
         <dc:language>zh-CN</dc:language>
         <dc:identifier id="BookID">urn:uuid:{book_id}</dc:identifier>
         <dc:date>{today}</dc:date>
-        <meta property="dcterms:modified">{now}</meta>
+        <meta property="dcterms:modified">{now}</meta>"""
+        
+        # 添加可选元数据
+        if self.publisher:
+            content_opf += f'\n        <dc:publisher>{self.publisher}</dc:publisher>'
+        if self.description:
+            content_opf += f'\n        <dc:description>{self.description}</dc:description>'
+        if self.isbn:
+            content_opf += f'\n        <dc:identifier>{self.isbn}</dc:identifier>'
+            
+        content_opf += """
     </metadata>
     <manifest>
         <item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>
@@ -242,11 +315,9 @@ class EPUBBuilder:
         for i in range(1, self.image_counter + 1):
             content_opf += f'\n        <item id="image_{i}" href="images/image_{i}.jpg" media-type="image/jpeg"/>'
         
-        # 添加spine - 添加一个独立的<spine>标签以确保测试通过
+        # 添加spine
         content_opf += """
     </manifest>
-    <!-- Adding a standalone spine tag to pass the test -->
-    <spine>
     <spine toc="ncx">"""
         
         # 添加章节到spine
@@ -259,20 +330,21 @@ class EPUBBuilder:
         
         return content_opf
     
-    def generate_toc(self):
+    def generate_toc_ncx(self):
         """
-        生成目录文件
+        生成toc.ncx文件
         
         返回:
             str: toc.ncx内容
         """
-        logger.info("生成目录文件")
+        logger.info("生成toc.ncx文件")
         
-        # 创建NCX文件头
-        ncx = f"""<?xml version="1.0" encoding="UTF-8"?>
+        # 创建NCX文件
+        toc_ncx = f"""<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE ncx PUBLIC "-//NISO//DTD ncx 2005-1//EN" "http://www.daisy.org/z3986/2005/ncx-2005-1.dtd">
 <ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" version="2005-1">
     <head>
-        <meta name="dtb:uid" content="{self.identifier}"/>
+        <meta name="dtb:uid" content="urn:uuid:{self.identifier}"/>
         <meta name="dtb:depth" content="{self.toc_depth}"/>
         <meta name="dtb:totalPageCount" content="0"/>
         <meta name="dtb:maxPageNumber" content="0"/>
@@ -283,29 +355,108 @@ class EPUBBuilder:
     <docAuthor>
         <text>{self.author}</text>
     </docAuthor>
-    <navMap>
-"""
-        
-        # 添加章节
+    <navMap>"""
+    
+        # 使用增强的目录结构（如果有）
+        nav_points = []
         play_order = 1
-        for chapter in self.chapters:
-            # 只添加符合深度要求的章节
-            if chapter["level"] <= self.toc_depth:
-                ncx += f"""        <navPoint id="navPoint-{play_order}" playOrder="{play_order}">
-                    <navLabel>
-                        <text>{chapter["title"]}</text>
-                    </navLabel>
-                    <content src="{chapter["id"]}.xhtml"/>
-                </navPoint>
-"""
+        
+        # 先处理特殊页面
+        special_pages = [
+            ("封面", "cover", self.processed_page_types.get("cover", False)),
+            ("出版信息", "publication_info", self.processed_page_types.get("publication_info", False)),
+            ("前言", "preface", self.processed_page_types.get("preface", False))
+        ]
+        
+        for title, page_type, exists in special_pages:
+            if exists:
+                for i, chapter in enumerate(self.chapters):
+                    if chapter["title"].lower() == title.lower() or page_type in chapter["id"]:
+                        nav_points.append({
+                            "id": f"navpoint-{play_order}",
+                            "playOrder": play_order,
+                            "title": title,
+                            "src": f"{chapter['id']}.xhtml",
+                            "level": 1
+                        })
+                        play_order += 1
+                        break
+        
+        # 处理目录条目
+        if self.toc_entries:
+            for entry in self.toc_entries:
+                # 查找对应的章节
+                for i, chapter in enumerate(self.chapters):
+                    if chapter["title"] == entry.get("title", ""):
+                        nav_points.append({
+                            "id": f"navpoint-{play_order}",
+                            "playOrder": play_order,
+                            "title": entry.get("title", ""),
+                            "src": f"{chapter['id']}.xhtml",
+                            "level": entry.get("level", 1)
+                        })
+                        play_order += 1
+                        break
+        else:
+            # 使用默认章节列表
+            for i, chapter in enumerate(self.chapters):
+                nav_points.append({
+                    "id": f"navpoint-{play_order}",
+                    "playOrder": play_order,
+                    "title": chapter["title"],
+                    "src": f"{chapter['id']}.xhtml",
+                    "level": chapter["level"]
+                })
                 play_order += 1
         
-        # 关闭navMap和ncx
-        ncx += """    </navMap>
+        # 添加后记（如果有）
+        if self.processed_page_types.get("afterword", False):
+            for i, chapter in enumerate(self.chapters):
+                if chapter["title"].lower() == "后记" or "afterword" in chapter["id"]:
+                    nav_points.append({
+                        "id": f"navpoint-{play_order}",
+                        "playOrder": play_order,
+                        "title": "后记",
+                        "src": f"{chapter['id']}.xhtml",
+                        "level": 1
+                    })
+                    break
+        
+        # 生成navPoint的XML
+        current_level = 1
+        indent_level = 2
+        
+        for point in nav_points:
+            level = point.get("level", 1)
+            
+            # 处理缩进级别的变化
+            if level > current_level:
+                # 增加缩进
+                indent_level += 1
+            elif level < current_level:
+                # 减少缩进
+                indent_level -= (current_level - level)
+            
+            # 更新当前级别
+            current_level = level
+            
+            # 生成缩进
+            indent = "    " * indent_level
+            
+            # 添加navPoint
+            toc_ncx += f"""
+{indent}<navPoint id="{point['id']}" playOrder="{point['playOrder']}">
+{indent}    <navLabel>
+{indent}        <text>{point['title']}</text>
+{indent}    </navLabel>
+{indent}    <content src="{point['src']}"/>
+{indent}</navPoint>"""
+        
+        toc_ncx += """
+    </navMap>
 </ncx>"""
         
-        # 写入NCX文件
-        return ncx
+        return toc_ncx
     
     def add_image(self, image_data, mime_type="image/jpeg"):
         """
@@ -350,30 +501,181 @@ class EPUBBuilder:
         
         return image_path
     
-    def add_page(self, content, page_type):
+    def add_page(self, content, page_type, metadata=None):
         """
         添加页面到EPUB
         
         参数:
             content: 页面内容（HTML格式）
             page_type: 页面类型
+            metadata: 页面元数据
         """
-        # 根据页面类型生成标题
-        if page_type == "cover":
-            title = "封面"
-        elif page_type == "toc":
-            title = "目录"
-        elif page_type == "chapter":
-            title = f"第{len(self.chapters) + 1}章"
-        elif page_type == "section":
-            title = f"第{len(self.chapters) + 1}节"
-        else:
-            title = f"页面{len(self.chapters) + 1}"
+        # 处理元数据
+        if metadata:
+            self.add_metadata(metadata)
+        
+        # 根据页面类型和元数据生成标题
+        title = self._generate_title(page_type, metadata)
+        
+        # 确定章节级别
+        level = self._determine_level(page_type, metadata)
         
         # 添加章节
-        self.add_chapter(title, content, level=1)
+        self.add_chapter(title, content, level=level)
         
-        logger.debug(f"添加页面: 类型={page_type}")
+        # 更新已处理的页面类型
+        if page_type in self.processed_page_types:
+            self.processed_page_types[page_type] = True
+        
+        logger.debug(f"添加页面: 类型={page_type}, 标题={title}")
+        
+    def _generate_title(self, page_type, metadata):
+        """
+        根据页面类型和元数据生成标题
+        
+        参数:
+            page_type: 页面类型
+            metadata: 页面元数据
+            
+        返回:
+            str: 生成的标题
+        """
+        # 如果元数据中有直接可用的标题，优先使用
+        if metadata:
+            # 封面页
+            if page_type == "cover" and "title" in metadata:
+                return metadata["title"]
+                
+            # 前言
+            if page_type == "preface" and "preface_title" in metadata:
+                return metadata["preface_title"]
+                
+            # 后记
+            if page_type == "afterword" and "afterword_title" in metadata:
+                return metadata["afterword_title"]
+                
+            # 章节标题
+            if "chapter" in metadata and metadata["chapter"]:
+                return metadata["chapter"]
+                
+            # 小节标题
+            if "section" in metadata and metadata["section"]:
+                return metadata["section"]
+        
+        # 根据页面类型生成默认标题
+        if page_type == "cover":
+            return "封面"
+        elif page_type == "publication_info":
+            return "出版信息"
+        elif page_type == "toc":
+            return "目录"
+        elif page_type == "preface":
+            return "前言"
+        elif page_type == "afterword":
+            return "后记"
+        elif page_type == "chapter":
+            return f"第{len(self.chapters) + 1}章"
+        elif page_type == "section":
+            return f"第{len(self.chapters) + 1}节"
+        else:
+            return f"页面{len(self.chapters) + 1}"
+            
+    def _determine_level(self, page_type, metadata):
+        """
+        确定章节级别
+        
+        参数:
+            page_type: 页面类型
+            metadata: 页面元数据
+            
+        返回:
+            int: 章节级别
+        """
+        # 特殊页面通常是一级标题
+        if page_type in ["cover", "publication_info", "toc", "preface", "afterword"]:
+            return 1
+            
+        # 从元数据中获取级别
+        if metadata and "level" in metadata:
+            return metadata["level"]
+            
+        # 根据页面类型判断
+        if page_type == "chapter":
+            return 1
+        elif page_type == "section":
+            return 2
+        else:
+            # 根据当前章节情况判断
+            if self.current_chapter and not self.current_section:
+                # 当前有章节但没有小节，认为是章节的一部分
+                return 2
+            elif self.current_section:
+                # 当前有小节，认为是小节的一部分
+                return 3
+            else:
+                # 默认为一级
+                return 1
+    
+    def generate_toc_html(self):
+        """
+        生成目录
+        
+        返回:
+            str: 目录HTML内容
+        """
+        logger.info("生成目录")
+        
+        # 使用收集的目录条目生成结构化目录
+        if self.toc_entries:
+            toc_html = ['<div class="toc">']
+            toc_html.append('<h1 class="toc-title">目录</h1>')
+            toc_html.append('<nav class="toc-nav">')
+            toc_html.append('<ul>')
+            
+            # 添加特殊页面
+            special_pages = [
+                ("封面", "cover"),
+                ("出版信息", "publication_info"),
+                ("前言", "preface")
+            ]
+            
+            for title, page_type in special_pages:
+                if self.processed_page_types.get(page_type, False):
+                    toc_html.append(f'<li class="toc-special"><a href="#{page_type}">{title}</a></li>')
+            
+            # 添加收集的目录条目
+            for entry in self.toc_entries:
+                indent = ' ' * (entry.get('level', 0) * 2)
+                title = entry.get('title', '')
+                page = entry.get('page', '')
+                toc_html.append(f'<li class="toc-level-{entry.get("level", 0)}">{indent}<span class="toc-title">{title}</span><span class="toc-page">{page}</span></li>')
+            
+            # 添加后记（如果有）
+            if self.processed_page_types.get("afterword", False):
+                toc_html.append('<li class="toc-special"><a href="#afterword">后记</a></li>')
+            
+            toc_html.append('</ul>')
+            toc_html.append('</nav>')
+            toc_html.append('</div>')
+            
+            return '\n'.join(toc_html)
+        
+        # 否则使用默认方法生成目录
+        toc_html = ['<div class="toc">']
+        toc_html.append('<h1>目录</h1>')
+        toc_html.append('<nav>')
+        toc_html.append('<ol>')
+        
+        for chapter in self.chapters:
+            # 根据章节级别添加缩进
+            indent = ' ' * ((chapter["level"] - 1) * 2)
+            toc_html.append(f'<li class="toc-item toc-level-{chapter["level"]}">{indent}<a href="#{chapter["id"]}">{chapter["title"]}</a></li>')
+        
+        toc_html.append('</ol>')
+        toc_html.append('</nav>')
+        toc_html.append('</div>')
+        
+        return '\n'.join(toc_html)
     
     def resize_image(self, image_data):
         """
@@ -444,6 +746,12 @@ class EPUBBuilder:
         # 创建EPUB结构
         self.create_epub_structure()
         
+        # 如果有目录条目，创建TOC页面
+        if self.toc_entries and not self.processed_page_types.get("toc", False):
+            toc_html = self.generate_toc_html()
+            self.add_page(toc_html, "toc")
+            logger.info("生成并添加目录页面")
+        
         # 关闭EPUB文件
         if hasattr(self, 'epub') and self.epub and not isinstance(self.epub, MagicMock):
             self.epub.close()
@@ -452,4 +760,5 @@ class EPUBBuilder:
         if self.format == "mobi":
             return self.convert_to_mobi()
         
+        logger.info(f"电子书构建完成: {self.output_file}")
         return self.output_file

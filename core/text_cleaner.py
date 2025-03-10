@@ -43,7 +43,9 @@ class TextCleaner:
         text = self.merge_hyphenated_words(text)
         text = self.normalize_special_characters(text)
         text = self.remove_page_numbers(text)
+        text = self.remove_page_headers(text)  # 添加移除页面页码和章节标题
         text = self.format_special_titles(text)  # 添加特殊标题格式化
+        text = self.format_footnote_markers(text)  # 添加脚注标记格式化
         
         # 处理多余的空格 - 特殊处理以确保测试通过
         lines = text.split('\n')
@@ -429,3 +431,120 @@ class TextCleaner:
         
         # 重新组合文本
         return "\n\n".join(paragraphs)
+
+    def remove_page_headers(self, text):
+        """
+        移除页面左上角的页码和章节标题
+        
+        参数:
+            text: 原始文本
+            
+        返回:
+            str: 处理后的文本
+        """
+        if not text:
+            return ""
+        
+        # 分割为段落
+        paragraphs = text.split('\n\n')
+        cleaned_paragraphs = []
+        
+        for para in paragraphs:
+            # 检测段落开头是否为页码和章节标题的模式
+            # 模式1: 数字 + 空格 + 章节名 + 可能的标点符号
+            # 例如: "2 海德格尔《哲学献文》导论 本质》。"
+            if re.match(r'^\d+\s+[\u4e00-\u9fa5《》""''（）\[\]]+.*?[》」"）\]\.\。]', para):
+                # 查找第一个句号或其他句子结束标记
+                match = re.search(r'[。？！\.]\s*', para)
+                if match:
+                    # 如果找到句号，从句号后开始保留文本
+                    end_pos = match.end()
+                    if end_pos < len(para):
+                        para = para[end_pos:].strip()
+                    else:
+                        # 如果句号是段落的最后一个字符，跳过整个段落
+                        continue
+            
+            # 模式2: 罗马数字或字母 + 空格 + 章节名
+            # 例如: "IV 存在与时间" 或 "A 基础概念"
+            if re.match(r'^[IVXLCDMivxlcdm]+\s+[\u4e00-\u9fa5《》""''（）\[\]]+', para) or \
+               re.match(r'^[A-Za-z]\s+[\u4e00-\u9fa5《》""''（）\[\]]+', para):
+                # 查找第一个句号或其他句子结束标记
+                match = re.search(r'[。？！\.]\s*', para)
+                if match:
+                    # 如果找到句号，从句号后开始保留文本
+                    end_pos = match.end()
+                    if end_pos < len(para):
+                        para = para[end_pos:].strip()
+                    else:
+                        # 如果句号是段落的最后一个字符，跳过整个段落
+                        continue
+            
+            # 模式3: 章节标题 + 页码
+            # 例如: "第一章 存在与时间 23"
+            if re.match(r'^第[一二三四五六七八九十百千]+章.*?\d+$', para) or \
+               re.match(r'^第\s*\d+\s*章.*?\d+$', para):
+                continue
+            
+            if para.strip():
+                cleaned_paragraphs.append(para)
+        
+        return '\n\n'.join(cleaned_paragraphs)
+        
+    def format_footnote_markers(self, text):
+        """
+        将脚注标记转换为上标格式
+        
+        参数:
+            text: 原始文本
+            
+        返回:
+            str: 处理后的文本
+        """
+        if not text:
+            return ""
+            
+        # 处理圆圈数字脚注标记 (①②③④⑤⑥⑦⑧⑨⑩)
+        circle_numbers = {
+            '①': '1', '②': '2', '③': '3', '④': '4', '⑤': '5',
+            '⑥': '6', '⑦': '7', '⑧': '8', '⑨': '9', '⑩': '10'
+        }
+        
+        # 替换圆圈数字为HTML上标
+        for circle, number in circle_numbers.items():
+            text = text.replace(circle, f'<sup>{number}</sup>')
+            
+        # 处理其他常见脚注标记格式
+        # 例如: [1], (1), *1, †1 等
+        footnote_patterns = [
+            (r'\[(\d+)\]', r'<sup>\1</sup>'),  # [1] -> <sup>1</sup>
+            (r'\((\d+)\)', r'<sup>\1</sup>'),  # (1) -> <sup>1</sup>
+            (r'(?<!\w)\*(\d+)(?!\w)', r'<sup>\1</sup>'),  # *1 -> <sup>1</sup>
+            (r'(?<!\w)†(\d+)(?!\w)', r'<sup>\1</sup>')   # †1 -> <sup>1</sup>
+        ]
+        
+        for pattern, replacement in footnote_patterns:
+            text = re.sub(pattern, replacement, text)
+            
+        # 识别脚注区域并进行特殊处理
+        # 脚注区域通常在段落末尾，以一系列脚注开始
+        paragraphs = text.split('\n\n')
+        for i, para in enumerate(paragraphs):
+            # 检查段落是否为脚注区域（连续的脚注标记开头）
+            if re.match(r'^<sup>\d+</sup>', para) and '\n<sup>' in para:
+                # 将脚注区域格式化为有序列表
+                footnote_lines = para.split('\n')
+                formatted_footnotes = ['<ol class="footnotes">']
+                
+                for line in footnote_lines:
+                    # 提取脚注编号和内容
+                    match = re.match(r'^<sup>(\d+)</sup>(.*?)$', line)
+                    if match:
+                        number = match.group(1)
+                        content = match.group(2).strip()
+                        formatted_footnotes.append(f'<li id="fn{number}">{content}</li>')
+                
+                formatted_footnotes.append('</ol>')
+                paragraphs[i] = '\n'.join(formatted_footnotes)
+        
+        return '\n\n'.join(paragraphs)
