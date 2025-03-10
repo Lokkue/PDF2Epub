@@ -88,6 +88,16 @@ p {
     margin: 0.5em 0;
 }
 
+/* 特殊标题样式（总序、前言等） */
+h2.special-title {
+    text-align: center;
+    font-size: 1.4em;
+    border-bottom: none;
+    margin-top: 2em;
+    margin-bottom: 1em;
+    page-break-before: always;
+}
+
 /* 引用样式 */
 blockquote {
     margin: 1em 2em;

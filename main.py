@@ -222,10 +222,16 @@ def process_pdf(args, config, logger):
     # 初始化OCR处理器
     ocr_processor = OCRProcessor(config, logger)
     
+    # 初始化缓存管理器
+    cache_db_path = "./pdf2epub_cache.db"  # 默认路径
+    if 'Cache' in config and 'db_path' in config['Cache']:
+        cache_db_path = config['Cache']['db_path']
+    
+    cache_manager = CacheManager(cache_db_path)
+    
     # 初始化EPUB构建器
     epub_builder = EPUBBuilder(
-        output_file,
-        logger=logger
+        output_file
     )
     
     # 设置元数据
@@ -238,6 +244,11 @@ def process_pdf(args, config, logger):
     # 创建任务
     task_id = None
     start_page = 0
+    
+    # 检查是否自动恢复
+    auto_resume = False  # 默认不自动恢复
+    if 'General' in config and 'auto_resume' in config['General']:
+        auto_resume = config['General'].getboolean('auto_resume')
     
     if args.resume or auto_resume:
         # 查找现有任务
@@ -260,7 +271,7 @@ def process_pdf(args, config, logger):
             'title': title,
             'author': author
         }
-        task_id = cache_manager.create_task(metadata)
+        task_id = cache_manager.create_task(args.input, metadata)
         logger.info(f" 创建新任务: {task_id}")
     
     # 处理页面
@@ -313,7 +324,13 @@ def process_pdf(args, config, logger):
                             logger.info(f" 本页使用了 {tokens_used} tokens")
                 
                 # 处理页面
-                processed_text, page_type = process_page(image_data, text)
+                # 确保image_data是字节数据或OpenCV图像，而不是字典
+                if isinstance(image_data, dict) and 'image' in image_data:
+                    image_for_processing = image_data['image']
+                else:
+                    image_for_processing = image_data
+                
+                processed_text, page_type = process_page(image_for_processing, text)
                 
                 # 保存缓存
                 cache_manager.save_page_cache(
@@ -328,7 +345,7 @@ def process_pdf(args, config, logger):
             epub_builder.add_page(processed_text, page_type)
             
             # 创建检查点
-            cache_manager.create_checkpoint(task_id, page_num)
+            cache_manager.save_checkpoint(task_id, page_num)
             
             # 更新进度条
             pbar.update(1)
@@ -370,10 +387,10 @@ def process_pdf(args, config, logger):
 
 def process_page(image, text):
     """
-    处理单个页面
+    处理页面内容
     
     参数:
-        image: 页面图像（字节数据或OpenCV图像）
+        image: 页面图像（字节数据或图像对象）
         text: 页面文本
         
     返回:
@@ -382,10 +399,10 @@ def process_page(image, text):
     # 检查图像是否为字节数据，如果是则解码
     if isinstance(image, bytes):
         try:
-            # 解码JPEG字节数据为OpenCV图像
+            # 解码图像数据
             nparr = np.frombuffer(image, np.uint8)
             image = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-            logger.debug("已将字节图像数据解码为OpenCV图像")
+            logger.debug("已将图像数据解码为处理格式")
         except Exception as e:
             logger.error(f"图像解码失败: {e}")
             # 如果解码失败，返回空白页

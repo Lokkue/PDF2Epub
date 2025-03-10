@@ -150,29 +150,30 @@ class EPUBBuilder:
         if isinstance(self.output_file, MagicMock):
             self.epub = self.output_file
         else:
-            with zipfile.ZipFile(self.output_file, "w") as epub:
-                # 添加mimetype文件（必须是第一个文件，且不压缩）
-                epub.writestr("mimetype", "application/epub+zip", compress_type=zipfile.ZIP_STORED)
-                
-                # 创建META-INF目录
-                # 添加容器文件
-                container_xml = """<?xml version="1.0" encoding="UTF-8"?>
+            # 将epub对象保存为类的属性，以便在其他方法中使用
+            self.epub = zipfile.ZipFile(self.output_file, "w")
+            # 添加mimetype文件（必须是第一个文件，且不压缩）
+            self.epub.writestr("mimetype", "application/epub+zip", compress_type=zipfile.ZIP_STORED)
+            
+            # 创建META-INF目录
+            # 添加容器文件
+            container_xml = """<?xml version="1.0" encoding="UTF-8"?>
 <container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
     <rootfiles>
         <rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/>
     </rootfiles>
 </container>"""
-                epub.writestr("META-INF/container.xml", container_xml)
-                
-                # 创建OEBPS目录结构
-                # 创建styles目录
-                # 添加CSS样式
-                css = self.load_css_template()
-                epub.writestr("OEBPS/styles/main.css", css)
-                
-                # 写入章节文件
-                for chapter in self.chapters:
-                    chapter_content = f"""<?xml version="1.0" encoding="UTF-8"?>
+            self.epub.writestr("META-INF/container.xml", container_xml)
+            
+            # 创建OEBPS目录结构
+            # 创建styles目录
+            # 添加CSS样式
+            css = self.load_css_template()
+            self.epub.writestr("OEBPS/styles/main.css", css)
+            
+            # 写入章节文件
+            for chapter in self.chapters:
+                chapter_content = f"""<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE html>
 <html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops">
 <head>
@@ -185,20 +186,20 @@ class EPUBBuilder:
     {chapter["content"]}
 </body>
 </html>"""
-                    
-                    epub.writestr(f"OEBPS/{chapter['id']}.xhtml", chapter_content)
                 
-                # 写入content.opf文件
-                content_opf = self.generate_content_opf()
-                epub.writestr("OEBPS/content.opf", content_opf)
-                
-                # 写入toc.ncx文件
-                toc_ncx = self.generate_toc()
-                epub.writestr("OEBPS/toc.ncx", toc_ncx)
-                
-                # 创建images目录（如果有图像）
-                if self.image_counter > 0:
-                    epub.writestr("OEBPS/images/.keep", "")
+                self.epub.writestr(f"OEBPS/{chapter['id']}.xhtml", chapter_content)
+            
+            # 写入content.opf文件
+            content_opf = self.generate_content_opf()
+            self.epub.writestr("OEBPS/content.opf", content_opf)
+            
+            # 写入toc.ncx文件
+            toc_ncx = self.generate_toc()
+            self.epub.writestr("OEBPS/toc.ncx", toc_ncx)
+            
+            # 创建images目录（如果有图像）
+            if self.image_counter > 0:
+                self.epub.writestr("OEBPS/images/.keep", "")
     
     def generate_content_opf(self):
         """
@@ -349,6 +350,31 @@ class EPUBBuilder:
         
         return image_path
     
+    def add_page(self, content, page_type):
+        """
+        添加页面到EPUB
+        
+        参数:
+            content: 页面内容（HTML格式）
+            page_type: 页面类型
+        """
+        # 根据页面类型生成标题
+        if page_type == "cover":
+            title = "封面"
+        elif page_type == "toc":
+            title = "目录"
+        elif page_type == "chapter":
+            title = f"第{len(self.chapters) + 1}章"
+        elif page_type == "section":
+            title = f"第{len(self.chapters) + 1}节"
+        else:
+            title = f"页面{len(self.chapters) + 1}"
+        
+        # 添加章节
+        self.add_chapter(title, content, level=1)
+        
+        logger.debug(f"添加页面: 类型={page_type}")
+    
     def resize_image(self, image_data):
         """
         调整图像大小
@@ -417,6 +443,10 @@ class EPUBBuilder:
         
         # 创建EPUB结构
         self.create_epub_structure()
+        
+        # 关闭EPUB文件
+        if hasattr(self, 'epub') and self.epub and not isinstance(self.epub, MagicMock):
+            self.epub.close()
         
         # 如果需要MOBI格式，转换EPUB为MOBI
         if self.format == "mobi":

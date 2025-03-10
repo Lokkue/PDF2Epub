@@ -419,7 +419,8 @@ class TextCleaner:
                             new_para = ""
                             if before_title:
                                 new_para += before_title + "\n\n"
-                            new_para += title + "\n\n"  # 标题单独成行
+                            # 将特殊标题格式化为HTML标题标签
+                            new_para += f"<h2 class=\"special-title\">{title}</h2>\n\n"  # 使用h2标签和特殊CSS类
                             if after_title:
                                 new_para += after_title
                             
