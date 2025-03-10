@@ -45,9 +45,31 @@ class OCRProcessor:
 
         # 读取配置文件
         config = configparser.ConfigParser()
-        config.read('config/settings.ini')
-        self.api_url = config.get('ocr', 'api_url')
-        self.api_key = config.get('ocr', 'api_key')
+        config_path = 'config/settings.ini'
+        template_path = 'config/settings.ini.template'
+        
+        # 检查配置文件是否存在
+        if not os.path.exists(config_path):
+            if os.path.exists(template_path):
+                logger.warning(f"配置文件 {config_path} 不存在，请根据模板 {template_path} 创建")
+                raise FileNotFoundError(f"配置文件 {config_path} 不存在，请根据模板创建")
+            else:
+                logger.error(f"配置文件 {config_path} 和模板 {template_path} 都不存在")
+                raise FileNotFoundError(f"配置文件和模板都不存在")
+        
+        config.read(config_path)
+        
+        try:
+            self.api_url = config.get('ocr', 'api_url')
+            self.api_key = config.get('ocr', 'api_key')
+            
+            # 验证API配置
+            if not self.api_url or not self.api_key or self.api_key == "YOUR_API_KEY_HERE":
+                logger.error("API配置无效，请在配置文件中设置有效的API URL和密钥")
+                raise ValueError("API配置无效，请在配置文件中设置有效的API URL和密钥")
+        except (configparser.NoSectionError, configparser.NoOptionError) as e:
+            logger.error(f"配置文件格式错误: {e}")
+            raise
         
         # 检查API连通性
         if not self._check_api_connectivity():

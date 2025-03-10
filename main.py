@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-Toepub - PDF转EPUB/MOBI工具
+PDF2Epub - PDF转EPUB/MOBI工具
 使用大模型OCR功能
 """
 
@@ -63,16 +63,40 @@ def load_config():
     # 默认配置文件路径
     config_paths = [
         './config/settings.ini',
-        os.path.expanduser('~/.config/toepub/settings.ini'),
-        '/etc/toepub/settings.ini'
+        os.path.expanduser('~/.config/pdf2epub/settings.ini'),
+        '/etc/pdf2epub/settings.ini'
+    ]
+    
+    # 模板配置文件路径
+    template_paths = [
+        './config/settings.ini.template',
+        os.path.expanduser('~/.config/pdf2epub/settings.ini.template'),
+        '/etc/pdf2epub/settings.ini.template'
     ]
     
     # 尝试加载配置文件
+    config_loaded = False
     for path in config_paths:
         if os.path.exists(path):
             config.read(path, encoding='utf-8')
             logger.info(f"加载配置文件: {path}")
+            config_loaded = True
             break
+    
+    # 如果没有找到配置文件，检查是否有模板文件
+    if not config_loaded:
+        template_found = None
+        for path in template_paths:
+            if os.path.exists(path):
+                template_found = path
+                break
+        
+        if template_found:
+            logger.error(f"未找到配置文件。请根据模板创建配置文件: {template_found}")
+            raise FileNotFoundError(f"未找到配置文件。请根据模板创建配置文件: {template_found}")
+        else:
+            logger.error("未找到配置文件和模板文件")
+            raise FileNotFoundError("未找到配置文件和模板文件")
     
     return config
 
@@ -111,7 +135,7 @@ def process_pdf(args, config, logger):
         str: 输出文件路径
     """
     # 初始化缓存管理器
-    db_path = config.get('cache', 'db_path', fallback='./toepub_cache.db')
+    db_path = config.get('cache', 'db_path', fallback='./pdf2epub_cache.db')
     auto_resume = config.getboolean('cache', 'auto_resume', fallback=True)
     checkpoint_interval = config.getint('cache', 'checkpoint_interval', fallback=10)
     max_checkpoints = config.getint('cache', 'max_checkpoints', fallback=3)

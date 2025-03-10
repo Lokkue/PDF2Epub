@@ -1,0 +1,29 @@
+[ocr]
+# OCR API配置
+model_name = qwen-vl-ocr
+timeout = 30
+retry_count = 3
+batch_size = 5
+api_url = https://dashscope.aliyuncs.com/compatible-mode/v1/
+api_key = YOUR_API_KEY_HERE
+
+[cache]
+# 缓存配置
+db_path = ./pdf2epub_cache.db
+auto_resume = true
+checkpoint_interval = 10
+max_checkpoints = 3
+
+[epub]
+# EPUB生成配置
+css_template = default
+toc_depth = 3
+max_image_width = 800
+max_image_height = 1200
+image_quality = 85
+
+[debug]
+# 调试配置
+log_level = DEBUG  # DEBUG|INFO|WARNING|ERROR
+log_format = json  # text|json
+log_file = ./conversion.log
