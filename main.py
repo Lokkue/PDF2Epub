@@ -12,6 +12,8 @@ import logging
 import configparser
 import time
 from datetime import datetime
+import cv2
+import numpy as np
 
 # 导入核心模块
 from core.pdf_parser import PDFParser
@@ -313,12 +315,24 @@ def process_page(image, text):
     处理单个页面
     
     参数:
-        image: 页面图像
+        image: 页面图像（字节数据或OpenCV图像）
         text: 页面文本
         
     返回:
         tuple: (处理后的HTML内容, 页面类型)
     """
+    # 检查图像是否为字节数据，如果是则解码
+    if isinstance(image, bytes):
+        try:
+            # 解码JPEG字节数据为OpenCV图像
+            nparr = np.frombuffer(image, np.uint8)
+            image = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+            logger.debug("已将字节图像数据解码为OpenCV图像")
+        except Exception as e:
+            logger.error(f"图像解码失败: {e}")
+            # 如果解码失败，返回空白页
+            return "<div class='page'><p>图像处理失败</p></div>", "blank"
+    
     # 检测页面类型
     best_processor = None
     best_confidence = 0
