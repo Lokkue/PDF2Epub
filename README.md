@@ -141,10 +141,23 @@ PDF2Epub/
 │       ├── footnote.py     # 脚注处理器
 │       ├── table.py        # 表格处理器
 │       └── toc.py          # 目录处理器
+├── docs/                   # 文档
+│   └── README_DEV.md       # 开发者文档
+├── examples/               # 示例文件
 ├── samples/                # 示例PDF文件
+├── scripts/                # 实用脚本
+│   ├── convert_encoding.py # 编码转换脚本
+│   └── run_tests.py        # 测试运行脚本
 ├── tests/                  # 测试代码
+│   ├── test_conversion.py  # 转换测试脚本
+│   ├── test_epub_builder.py # EPUB构建器测试
+│   ├── test_ocr.py         # OCR处理器测试
+│   └── ...                 # 其他测试文件
+├── utils/                  # 工具函数
+│   ├── cache.py            # 缓存工具
+│   └── logger.py           # 日志工具
 ├── main.py                 # 主程序入口
-├── test_conversion.py      # 转换测试脚本
+├── api_client.py           # API客户端
 ├── requirements.txt        # 依赖项列表
 └── README.md               # 项目说明
 ```
