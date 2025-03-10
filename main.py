@@ -79,7 +79,7 @@ def load_config():
     for path in config_paths:
         if os.path.exists(path):
             config.read(path, encoding='utf-8')
-            logger.info(f"加载配置文件: {path}")
+            print(f"加载配置文件: {path}")
             config_loaded = True
             break
     
@@ -92,11 +92,13 @@ def load_config():
                 break
         
         if template_found:
-            logger.error(f"未找到配置文件。请根据模板创建配置文件: {template_found}")
-            raise FileNotFoundError(f"未找到配置文件。请根据模板创建配置文件: {template_found}")
+            error_msg = f"未找到配置文件。请根据模板创建配置文件: {template_found}"
+            print(error_msg)
+            raise FileNotFoundError(error_msg)
         else:
-            logger.error("未找到配置文件和模板文件")
-            raise FileNotFoundError("未找到配置文件和模板文件")
+            error_msg = "未找到配置文件和模板文件"
+            print(error_msg)
+            raise FileNotFoundError(error_msg)
     
     return config
 
@@ -351,17 +353,17 @@ def main():
     # 解析命令行参数
     args = parse_args()
     
-    # 加载配置
-    config = load_config()
-    
-    # 设置日志
-    global logger
-    logger = setup_logging(config, args.debug)
-    
-    # 记录开始时间
-    start_time = time.time()
-    
     try:
+        # 加载配置
+        config = load_config()
+        
+        # 设置日志
+        global logger
+        logger = setup_logging(config, args.debug)
+        
+        # 记录开始时间
+        start_time = time.time()
+        
         # 处理PDF
         output_path = process_pdf(args, config, logger)
         
@@ -376,11 +378,17 @@ def main():
         return 0
         
     except KeyboardInterrupt:
-        logger.warning("\n用户中断")
+        if 'logger' in globals():
+            logger.warning("\n用户中断")
+        else:
+            print("\n用户中断")
         return 130
         
     except Exception as e:
-        logger.error(f"转换失败: {e}", exc_info=args.debug)
+        if 'logger' in globals():
+            logger.error(f"转换失败: {e}", exc_info=args.debug if 'args' in locals() and hasattr(args, 'debug') else False)
+        else:
+            print(f"转换失败: {e}")
         return 1
 
 
