@@ -39,13 +39,13 @@ def select_pdf_file(pdf_files):
     让用户选择一个PDF文件
     
     参数:
-        pdf_files: PDF文件路径列表
+        pdf_files: PDF文件列表
         
     返回:
-        str: 选择的PDF文件路径
+        选择的PDF文件路径
     """
     if not pdf_files:
-        print("未找到PDF文件！")
+        print("错误: 未找到PDF文件")
         sys.exit(1)
     
     # 将路径转换为相对路径，以便更好地显示
@@ -59,6 +59,12 @@ def select_pdf_file(pdf_files):
     ]
     
     answers = inquirer.prompt(questions)
+    
+    # 处理用户取消操作
+    if answers is None:
+        print("\n操作已取消。")
+        sys.exit(0)
+    
     selected_index = relative_paths.index(answers['pdf_file'])
     
     return pdf_files[selected_index]
@@ -85,6 +91,11 @@ def get_output_path(input_path):
     
     answers = inquirer.prompt(questions)
     
+    # 处理用户取消操作
+    if answers is None:
+        print("\n操作已取消。")
+        sys.exit(0)
+    
     if answers['use_default']:
         return default_output
     
@@ -97,6 +108,12 @@ def get_output_path(input_path):
     ]
     
     answers = inquirer.prompt(questions)
+    
+    # 处理用户取消操作
+    if answers is None:
+        print("\n操作已取消。")
+        sys.exit(0)
+        
     output_dir = answers['output_dir']
     
     # 让用户输入文件名
@@ -107,6 +124,12 @@ def get_output_path(input_path):
     ]
     
     answers = inquirer.prompt(questions)
+    
+    # 处理用户取消操作
+    if answers is None:
+        print("\n操作已取消。")
+        sys.exit(0)
+        
     filename = answers['filename']
     
     return os.path.join(output_dir, filename + '.epub')
@@ -125,6 +148,29 @@ def run_conversion(input_path, output_path):
     # 构建命令
     cmd = [sys.executable, main_script, input_path, '-o', output_path]
     
+    # 询问日志级别
+    questions = [
+        inquirer.List('log_level',
+                     message='选择日志级别',
+                     choices=[
+                         ('基础级别', ''),
+                         ('信息级别', '-v'),
+                         ('开发者级别', '-vv')
+                     ],
+                     default='')
+    ]
+    
+    answers = inquirer.prompt(questions)
+    
+    # 处理用户取消操作
+    if answers is None:
+        print("\n操作已取消。")
+        sys.exit(0)
+        
+    log_level = answers['log_level']
+    if log_level:
+        cmd.append(log_level)
+    
     # 询问是否启用调试模式
     questions = [
         inquirer.Confirm('debug',
@@ -134,6 +180,11 @@ def run_conversion(input_path, output_path):
     
     answers = inquirer.prompt(questions)
     
+    # 处理用户取消操作
+    if answers is None:
+        print("\n操作已取消。")
+        sys.exit(0)
+        
     if answers['debug']:
         cmd.append('--debug')
     
@@ -146,6 +197,11 @@ def run_conversion(input_path, output_path):
     
     answers = inquirer.prompt(questions)
     
+    # 处理用户取消操作
+    if answers is None:
+        print("\n操作已取消。")
+        sys.exit(0)
+        
     if answers['limit_pages']:
         questions = [
             inquirer.Text('max_pages',
@@ -155,6 +211,12 @@ def run_conversion(input_path, output_path):
         ]
         
         answers = inquirer.prompt(questions)
+        
+        # 处理用户取消操作
+        if answers is None:
+            print("\n操作已取消。")
+            sys.exit(0)
+            
         cmd.extend(['--max-pages', answers['max_pages']])
     
     # 运行命令
