@@ -1,6 +1,6 @@
-# PDF2Epub - PDF转EPUB/MOBI工具
+# PDF2Epub - PDF转EPUB工具
 
-PDF2Epub是一个基于大模型OCR功能的PDF转EPUB/MOBI工具，专为中文PDF文档优化，能够智能识别文档结构，包括封面、目录、章节、表格等，并生成结构良好的电子书。
+PDF2Epub是一个基于大模型OCR功能的PDF转EPUB工具，专为中文PDF文档优化，能够智能识别文档结构，包括封面、目录、章节、表格等，并生成结构良好的电子书。
 
 **当前版本：v0.1.0**
 
@@ -59,7 +59,7 @@ python main.py input.pdf output.epub --format epub --max-pages 100 --debug
 ```
 
 参数说明：
-- `--format`: 输出格式，支持epub（默认）
+- `--format`: 输出格式，目前仅支持epub
 - `--max-pages`: 最大处理页数，默认处理全部页面
 - `--debug`: 启用调试模式，输出详细日志
 
