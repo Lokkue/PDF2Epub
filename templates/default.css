@@ -1,0 +1,224 @@
+/* 
+ * Toepub 默认样式
+ */
+
+/* 基本样式 */
+body {
+    font-family: "Source Han Serif CN", "Noto Serif CJK SC", "Songti SC", serif;
+    line-height: 1.6;
+    margin: 0 5%;
+    padding: 0;
+    text-align: justify;
+}
+
+/* 标题样式 */
+h1, h2, h3, h4, h5, h6 {
+    font-family: "Source Han Sans CN", "Noto Sans CJK SC", "Heiti SC", sans-serif;
+    font-weight: bold;
+    margin: 1em 0 0.5em 0;
+    line-height: 1.2;
+}
+
+h1 {
+    font-size: 1.5em;
+    text-align: center;
+    margin-top: 2em;
+    margin-bottom: 1em;
+}
+
+h2 {
+    font-size: 1.3em;
+    border-bottom: 1px solid #ddd;
+    padding-bottom: 0.3em;
+}
+
+h3 {
+    font-size: 1.1em;
+}
+
+h4, h5, h6 {
+    font-size: 1em;
+}
+
+/* 段落样式 */
+p {
+    margin: 0.5em 0;
+    text-indent: 2em;
+    orphans: 2;
+    widows: 2;
+}
+
+/* 封面样式 */
+.cover {
+    text-align: center;
+    margin: 0;
+    padding: 0;
+}
+
+.cover img {
+    max-width: 100%;
+    max-height: 100%;
+}
+
+.cover h1 {
+    font-size: 2em;
+    margin-top: 3em;
+}
+
+.cover .author {
+    font-size: 1.2em;
+    margin-top: 2em;
+}
+
+/* 目录样式 */
+.toc {
+    margin: 2em 0;
+}
+
+.toc h2 {
+    text-align: center;
+    border-bottom: none;
+}
+
+.toc ol {
+    padding-left: 2em;
+}
+
+.toc li {
+    margin: 0.5em 0;
+}
+
+/* 引用样式 */
+blockquote {
+    margin: 1em 2em;
+    padding: 0.5em 1em;
+    border-left: 3px solid #ddd;
+    background-color: #f9f9f9;
+    font-family: "Source Han Serif CN", "Noto Serif CJK SC", "Kaiti SC", serif;
+    text-indent: 0;
+}
+
+blockquote p {
+    text-indent: 0;
+}
+
+/* 脚注样式 */
+.footnote {
+    font-size: 0.9em;
+    color: #666;
+    margin: 1em 0;
+    padding-top: 0.5em;
+    border-top: 1px solid #ddd;
+}
+
+.footnote-ref {
+    font-size: 0.8em;
+    vertical-align: super;
+    line-height: 0;
+    color: #0066cc;
+    text-decoration: none;
+}
+
+/* 表格样式 */
+table {
+    border-collapse: collapse;
+    width: 100%;
+    margin: 1em 0;
+    font-size: 0.9em;
+}
+
+th, td {
+    border: 1px solid #ddd;
+    padding: 0.5em;
+    text-align: left;
+}
+
+th {
+    background-color: #f2f2f2;
+    font-weight: bold;
+}
+
+/* 图像样式 */
+img {
+    max-width: 100%;
+    height: auto;
+    display: block;
+    margin: 1em auto;
+}
+
+/* 版权页样式 */
+.copyright {
+    font-size: 0.9em;
+    color: #666;
+    margin: 2em 0;
+    text-align: center;
+}
+
+/* 前言样式 */
+.preface {
+    margin: 2em 0;
+}
+
+.preface h2 {
+    text-align: center;
+    border-bottom: none;
+}
+
+/* 链接样式 */
+a {
+    color: #0066cc;
+    text-decoration: none;
+}
+
+a:hover {
+    text-decoration: underline;
+}
+
+/* 代码样式 */
+code {
+    font-family: "Source Code Pro", monospace;
+    background-color: #f5f5f5;
+    padding: 0.2em 0.4em;
+    border-radius: 3px;
+    font-size: 0.9em;
+}
+
+pre {
+    background-color: #f5f5f5;
+    padding: 1em;
+    overflow-x: auto;
+    border-radius: 3px;
+    margin: 1em 0;
+}
+
+pre code {
+    background-color: transparent;
+    padding: 0;
+    border-radius: 0;
+}
+
+/* 水平线样式 */
+hr {
+    border: none;
+    border-top: 1px solid #ddd;
+    margin: 2em 0;
+}
+
+/* 列表样式 */
+ul, ol {
+    margin: 1em 0;
+    padding-left: 2em;
+}
+
+li {
+    margin: 0.5em 0;
+}
+
+/* 强调样式 */
+em {
+    font-style: italic;
+}
+
+strong {
+    font-weight: bold;
+}
