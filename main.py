@@ -14,6 +14,7 @@ import time
 from datetime import datetime
 import cv2
 import numpy as np
+from tqdm import tqdm
 
 # 导入核心模块
 from core.pdf_parser import PDFParser
@@ -49,6 +50,7 @@ def parse_args():
     parser.add_argument('-r', '--resume', action='store_true', help='从断点继续')
     parser.add_argument('-c', '--clean-cache', action='store_true', help='清除缓存')
     parser.add_argument('-d', '--debug', action='store_true', help='启用调试模式')
+    parser.add_argument('-v', '--verbose', action='count', default=0, help='详细程度 (默认: 0)')
     
     return parser.parse_args()
 
@@ -105,25 +107,86 @@ def load_config():
     return config
 
 
-def setup_logging(config, debug=False):
+def setup_logging(config, debug=False, verbose=0):
     """
     设置日志系统
     
     参数:
         config: 配置对象
         debug: 是否启用调试模式
+        verbose: 详细程度 (0=基础, 1=信息, 2=开发者)
     
     返回:
         logging.Logger: 日志记录器
     """
-    log_level = config.get('debug', 'log_level', fallback='INFO')
-    log_format = config.get('debug', 'log_format', fallback='text')
-    log_file = config.get('debug', 'log_file', fallback=None)
+    # 创建日志记录器
+    logger = logging.getLogger('toepub')
     
+    # 设置日志级别
     if debug:
-        log_level = 'DEBUG'
+        logger.setLevel(logging.DEBUG)
+    else:
+        if verbose == 0:
+            logger.setLevel(logging.WARNING)
+        elif verbose == 1:
+            logger.setLevel(logging.INFO)
+        else:
+            logger.setLevel(logging.DEBUG)
     
-    return setup_logger(log_level, log_file, log_format, debug)
+    # 清除现有处理器
+    for handler in logger.handlers[:]:
+        logger.removeHandler(handler)
+    
+    # 创建控制台处理器
+    console_handler = logging.StreamHandler()
+    
+    # 设置格式
+    if verbose == 0:
+        # 基础级别：简洁彩色输出
+        formatter = ColoredFormatter('%(levelname_colored)s: %(message)s')
+    elif verbose == 1:
+        # 信息级别：包含时间和模块
+        formatter = ColoredFormatter('%(asctime)s - %(levelname_colored)s: %(message)s', 
+                                    datefmt='%H:%M:%S')
+    else:
+        # 开发者级别：详细信息
+        formatter = ColoredFormatter('%(asctime)s - %(name)s.%(module)s - %(levelname_colored)s: %(message)s',
+                                    datefmt='%H:%M:%S')
+    
+    console_handler.setFormatter(formatter)
+    logger.addHandler(console_handler)
+    
+    # 设置第三方库的日志级别
+    if not debug:
+        logging.getLogger('httpcore').setLevel(logging.WARNING)
+        logging.getLogger('httpx').setLevel(logging.WARNING)
+        logging.getLogger('openai').setLevel(logging.WARNING)
+    
+    return logger
+
+class ColoredFormatter(logging.Formatter):
+    """
+    彩色日志格式化器
+    """
+    COLORS = {
+        'DEBUG': '\033[94m',  # 蓝色
+        'INFO': '\033[92m',   # 绿色
+        'WARNING': '\033[93m', # 黄色
+        'ERROR': '\033[91m',  # 红色
+        'CRITICAL': '\033[91m\033[1m',  # 红色加粗
+        'RESET': '\033[0m'    # 重置
+    }
+    
+    def format(self, record):
+        # 添加彩色级别
+        levelname = record.levelname
+        record.levelname_colored = f"{self.COLORS.get(levelname, '')}{levelname}{self.COLORS['RESET']}"
+        
+        # 限制长消息
+        if record.levelno == logging.DEBUG and len(record.msg) > 500:
+            record.msg = record.msg[:500] + "... [内容已截断]"
+            
+        return super().format(record)
 
 
 def process_pdf(args, config, logger):
@@ -138,68 +201,31 @@ def process_pdf(args, config, logger):
     返回:
         str: 输出文件路径
     """
-    # 初始化缓存管理器
-    db_path = config.get('cache', 'db_path', fallback='./pdf2epub_cache.db')
-    auto_resume = config.getboolean('cache', 'auto_resume', fallback=True)
-    checkpoint_interval = config.getint('cache', 'checkpoint_interval', fallback=10)
-    max_checkpoints = config.getint('cache', 'max_checkpoints', fallback=3)
+    input_file = args.input
+    output_file = args.output
     
-    cache_manager = CacheManager(
-        db_path=db_path,
-        auto_resume=auto_resume,
-        checkpoint_interval=checkpoint_interval,
-        max_checkpoints=max_checkpoints
-    )
+    # 检查输入文件是否存在
+    if not os.path.exists(input_file):
+        logger.error(f"输入文件不存在: {input_file}")
+        return None
     
-    # 设置信号处理器
-    setup_signal_handlers(cache_manager)
+    # 初始化token计数器
+    total_tokens = 0
+    total_pages_with_ocr = 0
     
-    # 清除缓存
-    if args.clean_cache:
-        cache_manager.clear_all()
-        logger.info("已清除所有缓存")
-    
-    # 初始化PDF解析器
-    pdf_parser = PDFParser(args.input, max_pages=args.max_pages)
+    # 创建PDF解析器
+    pdf_parser = PDFParser(input_file, args.max_pages)
     page_count = pdf_parser.get_page_count()
-    logger.info(f"PDF文件: {args.input}, 页数: {page_count}")
+    
+    logger.info(f" PDF文件: {os.path.basename(input_file)} ({page_count}页)")
     
     # 初始化OCR处理器
-    model_name = config.get('ocr', 'model_name', fallback='qwen-vl-ocr')
-    timeout = config.getint('ocr', 'timeout', fallback=30)
-    retry_count = config.getint('ocr', 'retry_count', fallback=3)
-    batch_size = config.getint('ocr', 'batch_size', fallback=5)
-    
-    ocr_processor = OCRProcessor(
-        model_name=model_name,
-        timeout=timeout,
-        retry_count=retry_count,
-        batch_size=batch_size,
-        preprocess=True
-    )
-    
-    # 确定输出文件路径
-    if args.output:
-        output_file = args.output
-    else:
-        base_name = os.path.splitext(os.path.basename(args.input))[0]
-        output_file = f"{base_name}.{args.format}"
+    ocr_processor = OCRProcessor(config, logger)
     
     # 初始化EPUB构建器
-    css_template = config.get('epub', 'css_template', fallback='default')
-    toc_depth = config.getint('epub', 'toc_depth', fallback=3)
-    max_image_width = config.getint('epub', 'max_image_width', fallback=800)
-    max_image_height = config.getint('epub', 'max_image_height', fallback=1200)
-    image_quality = config.getint('epub', 'image_quality', fallback=85)
-    
     epub_builder = EPUBBuilder(
-        output_file=output_file,
-        format=args.format,
-        css_template=css_template,
-        toc_depth=toc_depth,
-        max_image_width=max_image_width,
-        max_image_height=max_image_height,
-        image_quality=image_quality
+        output_file,
+        logger=logger
     )
     
     # 设置元数据
@@ -218,13 +244,13 @@ def process_pdf(args, config, logger):
         task = cache_manager.get_task_by_file_path(args.input)
         if task:
             task_id = task['id']
-            logger.info(f"找到现有任务: {task_id}")
+            logger.info(f" 找到现有任务: {task_id}")
             
             # 获取最新检查点
             checkpoint = cache_manager.get_latest_checkpoint(task_id)
             if checkpoint:
                 start_page = checkpoint['current_page'] + 1
-                logger.info(f"从检查点继续: 页码 {start_page}")
+                logger.info(f" 从检查点继续: 页码 {start_page}")
     
     if not task_id:
         # 创建新任务
@@ -232,82 +258,114 @@ def process_pdf(args, config, logger):
             'file_path': args.input,
             'pages': page_count,
             'title': title,
-            'author': author,
-            'language': language,
-            'format': args.format
+            'author': author
         }
-        task_id = cache_manager.create_task(args.input, metadata)
-        logger.info(f"创建新任务: {task_id}")
-    
-    # 更新状态
-    update_state(task_id=task_id, page_num=start_page)
+        task_id = cache_manager.create_task(metadata)
+        logger.info(f" 创建新任务: {task_id}")
     
     # 处理页面
-    for page_num in range(start_page, page_count):
-        logger.info(f"处理页面 {page_num+1}/{page_count}")
-        update_state(page_num=page_num)
+    try:
+        # 使用tqdm创建进度条
+        pbar = tqdm(total=page_count, desc=" 转换进度", unit="页", 
+                   bar_format="{desc}: {percentage:3.0f}%|{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]")
         
-        # 检查是否有缓存
-        cached_page = cache_manager.get_page_cache(task_id, page_num)
-        if cached_page and cached_page.get('processed_text'):
-            logger.info(f"使用缓存: 页码 {page_num+1}")
-            processed_text = cached_page['processed_text']
-            page_type = cached_page['page_type']
-        else:
-            # 提取图像
-            image_data = pdf_parser.extract_image(page_num)
-            
-            # 检查是否有文本层
-            has_text_layer = pdf_parser.has_text_layer(page_num)
-            
-            if has_text_layer:
-                # 使用PDF文本层
-                text = pdf_parser.extract_text(page_num)
-                logger.debug(f"使用PDF文本层: 页码 {page_num+1}")
+        # 更新进度条到起始位置
+        if start_page > 0:
+            pbar.update(start_page)
+        
+        for page_num in range(start_page, page_count):
+            # 检查缓存
+            cache = cache_manager.get_page_cache(task_id, page_num)
+            if cache:
+                logger.debug(f"使用缓存: 页码 {page_num+1}")
+                processed_text = cache['processed_text']
+                page_type = cache['page_type']
             else:
-                # 使用OCR
-                logger.debug(f"使用OCR: 页码 {page_num+1}")
-                ocr_result = ocr_processor.ocr_page(image_data)
-                text = ocr_result.get('text', '')
+                # 提取图像
+                image_data = pdf_parser.extract_image(page_num)
+                
+                # 检查是否有文本层
+                has_text_layer = pdf_parser.has_text_layer(page_num)
+                
+                if has_text_layer:
+                    # 使用PDF文本层
+                    text = pdf_parser.extract_text(page_num)
+                    if args.verbose >= 1:
+                        logger.info(f" 处理页面 {page_num+1}/{page_count} (使用PDF文本层)")
+                    else:
+                        logger.debug(f"使用PDF文本层: 页码 {page_num+1}")
+                else:
+                    # 使用OCR
+                    if args.verbose >= 1:
+                        logger.info(f" 处理页面 {page_num+1}/{page_count} (使用OCR)")
+                    else:
+                        logger.debug(f"使用OCR: 页码 {page_num+1}")
+                    
+                    ocr_result = ocr_processor.ocr_page(image_data)
+                    text = ocr_result.get('text', '')
+                    
+                    # 累计token使用量
+                    if 'token_usage' in ocr_result:
+                        tokens_used = ocr_result['token_usage']
+                        total_tokens += tokens_used
+                        total_pages_with_ocr += 1
+                        if args.verbose >= 1:
+                            logger.info(f" 本页使用了 {tokens_used} tokens")
+                
+                # 处理页面
+                processed_text, page_type = process_page(image_data, text)
+                
+                # 保存缓存
+                cache_manager.save_page_cache(
+                    task_id=task_id,
+                    page_num=page_num,
+                    ocr_text=text,
+                    processed_text=processed_text,
+                    page_type=page_type
+                )
             
-            # 处理页面
-            processed_text, page_type = process_page(image_data, text)
+            # 添加到EPUB
+            epub_builder.add_page(processed_text, page_type)
             
-            # 保存缓存
-            cache_manager.save_page_cache(
-                task_id=task_id,
-                page_num=page_num,
-                ocr_text=text,
-                processed_text=processed_text,
-                page_type=page_type
-            )
+            # 创建检查点
+            cache_manager.create_checkpoint(task_id, page_num)
+            
+            # 更新进度条
+            pbar.update(1)
+            
+            # 更新进度条描述以显示token使用情况
+            if total_tokens > 0:
+                pbar.set_description(f" 转换进度 (已用tokens: {total_tokens})")
         
-        # 添加章节
-        chapter_title = f"第 {page_num+1} 页"
-        epub_builder.add_chapter(chapter_title, processed_text)
+        # 关闭进度条
+        pbar.close()
         
-        # 保存检查点
-        if page_num % checkpoint_interval == 0:
-            checkpoint_id = cache_manager.save_checkpoint(
-                task_id=task_id,
-                current_page=page_num
-            )
-            logger.debug(f"保存检查点: ID={checkpoint_id}, 页码={page_num+1}")
+        # 构建EPUB
+        logger.info(" 构建EPUB文件...")
+        epub_builder.build()
         
-        # 显示进度
-        progress = (page_num + 1) / page_count * 100
-        sys.stdout.write(f"\r进度: {progress:.1f}% ({page_num+1}/{page_count})")
-        sys.stdout.flush()
-    
-    # 构建电子书
-    logger.info("\n构建电子书...")
-    output_path = epub_builder.build()
-    
-    # 关闭资源
-    pdf_parser.close()
-    cache_manager.close()
-    
-    return output_path
+        # 显示token使用统计
+        if total_tokens > 0:
+            logger.info(f" 总共使用了 {total_tokens} tokens，处理了 {total_pages_with_ocr} 页OCR文本")
+            # 估算成本 (按照GPT-4的价格估算)
+            estimated_cost = (total_tokens / 1000) * 0.01  # 假设每1K tokens $0.01
+            logger.info(f" 估算成本: ${estimated_cost:.4f}")
+            if total_pages_with_ocr > 0:
+                avg_tokens = total_tokens / total_pages_with_ocr
+                logger.info(f" 平均每页OCR使用 {avg_tokens:.1f} tokens")
+        
+        logger.info(f" 转换完成! 输出文件: {output_file}")
+        
+        return output_file
+        
+    except Exception as e:
+        logger.error(f"转换失败: {str(e)}")
+        import traceback
+        logger.debug(traceback.format_exc())
+        return None
+    finally:
+        # 关闭PDF
+        pdf_parser.close()
 
 
 def process_page(image, text):
@@ -373,7 +431,7 @@ def main():
         
         # 设置日志
         global logger
-        logger = setup_logging(config, args.debug)
+        logger = setup_logging(config, args.debug, args.verbose)
         
         # 记录开始时间
         start_time = time.time()

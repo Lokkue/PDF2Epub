@@ -12,6 +12,7 @@ import sys
 import tempfile
 import shutil
 import numpy as np
+import configparser
 
 # 添加项目根目录到路径
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -29,10 +30,22 @@ class TestOCRProcessor(unittest.TestCase):
         self.test_dir = tempfile.mkdtemp()
         
         # 测试参数
-        self.model_name = "qwen-vl-max-latest"
+        self.model_name = "qwen-vl-max"
         self.timeout = 30
         self.retry_count = 3
         self.batch_size = 5
+        
+        # 创建测试配置
+        self.config = configparser.ConfigParser()
+        self.config['ocr'] = {
+            'model_name': self.model_name,
+            'timeout': str(self.timeout),
+            'retry_count': str(self.retry_count),
+            'batch_size': str(self.batch_size),
+            'preprocess': 'False',
+            'api_url': 'https://test-api-url.com',
+            'api_key': 'test-api-key'
+        }
         
         # 测试图像数据 - 使用numpy数组模拟图像
         self.test_image = np.zeros((100, 100, 3), dtype=np.uint8)
@@ -44,261 +57,285 @@ class TestOCRProcessor(unittest.TestCase):
     
     def test_init(self):
         """测试初始化"""
-        processor = OCRProcessor(
-            model_name=self.model_name,
-            timeout=self.timeout,
-            retry_count=self.retry_count,
-            batch_size=self.batch_size
-        )
+        # 创建模拟日志记录器
+        mock_logger = MagicMock()
         
-        self.assertEqual(processor.model_name, self.model_name)
-        self.assertEqual(processor.timeout, self.timeout)
-        self.assertEqual(processor.retry_count, self.retry_count)
-        self.assertEqual(processor.batch_size, self.batch_size)
+        # 模拟_check_api_connectivity方法
+        with patch('core.ocr_processor.OCRProcessor._check_api_connectivity', return_value=True):
+            processor = OCRProcessor(self.config, logger=mock_logger)
+            
+            # 验证属性
+            self.assertEqual(processor.model_name, self.model_name)
+            self.assertEqual(processor.timeout, self.timeout)
+            self.assertEqual(processor.retry_count, self.retry_count)
+            self.assertEqual(processor.batch_size, self.batch_size)
+            self.assertEqual(processor.preprocess, False)
+            self.assertEqual(processor.total_tokens, 0)
+            
+            # 验证日志记录
+            mock_logger.info.assert_called_with(f"🔍 初始化OCR处理器: 模型={self.model_name}")
     
     @patch('core.ocr_processor.OCRProcessor._call_llm_ocr')
-    def test_ocr_page_success(self, mock_call_llm_ocr):
-        """测试OCR处理单页成功"""
-        # 设置模拟对象
-        mock_call_llm_ocr.return_value = {
-            "content": "图中显示一位年轻女孩在公园里与一只金毛犬玩耍。女孩穿着蓝色连衣裙，狗狗正在追逐一个黄色的飞盘。背景有绿树和长椅。",
-            "analysis": {
-                "objects": ["女孩", "金毛犬", "飞盘", "树", "长椅"],
-                "actions": ["追逐", "玩耍"],
-                "environment": "户外公园"
-            }
+    def test_ocr_page(self, mock_call_llm_ocr):
+        """测试OCR处理单页图像"""
+        # 模拟OCR结果
+        mock_result = {
+            'text': '测试文本',
+            'confidence': 0.9,
+            'blocks': [],
+            'language': {'code': 'zh-CN', 'name': '简体中文'},
+            'token_usage': 100
         }
+        mock_call_llm_ocr.return_value = mock_result
         
-        # 初始化处理器
-        processor = OCRProcessor(model_name=self.model_name)
-        
-        # 处理页面
-        result = processor.ocr_page(self.test_image)
-        
-        # 验证
-        self.assertIn("女孩", result["content"])
-        self.assertIn("金毛犬", result["analysis"]["objects"])
-        self.assertEqual(result["analysis"]["environment"], "户外公园")
-        mock_call_llm_ocr.assert_called_once_with(self.test_image)
-    
-    @patch('core.ocr_processor.OCRProcessor._call_llm_ocr')
-    @patch('time.sleep')  # 避免实际等待
-    def test_ocr_page_retry(self, mock_sleep, mock_call_llm_ocr):
-        """测试OCR处理重试"""
-        # 设置模拟对象
-        mock_call_llm_ocr.side_effect = [
-            Exception("LLM服务暂时不可用"),  # 第一次调用失败
-            {  # 第二次调用成功
-                "text": "Retry successful",
-                "confidence": 0.9
-            }
-        ]
-        
-        # 初始化处理器
-        processor = OCRProcessor(
-            model_name=self.model_name,
-            retry_count=3
-        )
-        
-        # 处理页面
-        result = processor.ocr_page(self.test_image)
-        
-        # 验证
-        self.assertEqual(result["text"], "Retry successful")
-        self.assertEqual(result["confidence"], 0.9)
-        self.assertEqual(mock_call_llm_ocr.call_count, 2)
-        mock_sleep.assert_called_once()  # 验证重试等待
-    
-    @patch('core.ocr_processor.OCRProcessor._call_llm_ocr')
-    @patch('time.sleep')  # 避免实际等待
-    def test_ocr_page_max_retries_exceeded(self, mock_sleep, mock_call_llm_ocr):
-        """测试OCR处理超过最大重试次数"""
-        # 设置模拟对象 - 所有调用都失败
-        mock_call_llm_ocr.side_effect = Exception("LLM服务不可用")
-        
-        # 初始化处理器
-        processor = OCRProcessor(
-            model_name=self.model_name,
-            retry_count=3
-        )
-        
-        # 验证异常
-        with self.assertRaises(Exception) as context:
-            processor.ocr_page(self.test_image)
-        
-        self.assertIn("LLM服务不可用", str(context.exception))
-        self.assertEqual(mock_call_llm_ocr.call_count, 3)  # 验证重试次数
-    
-    @patch('cv2.cvtColor')
-    @patch('cv2.threshold')
-    @patch('cv2.GaussianBlur')
-    @patch('core.ocr_processor.OCRProcessor._call_llm_ocr')
-    def test_preprocess_image(self, mock_call_llm_ocr, mock_blur, mock_threshold, mock_cvtColor):
-        """测试图像预处理"""
-        # 设置模拟对象
-        mock_call_llm_ocr.return_value = {"text": "Preprocessed text"}
-        
-        # 模拟OpenCV处理
-        mock_cvtColor.return_value = "grayscale_image"
-        mock_blur.return_value = "blurred_image"
-        mock_threshold.return_value = (None, "binary_image")
-        
-        # 初始化处理器，启用预处理
-        processor = OCRProcessor(
-            model_name=self.model_name,
-            preprocess=True
-        )
-        
-        # 处理页面
-        result = processor.ocr_page(self.test_image)
-        
-        # 验证
-        self.assertEqual(result["text"], "Preprocessed text")
-        mock_cvtColor.assert_called_once()  # 验证灰度转换
-        mock_blur.assert_called_once()      # 验证高斯模糊
-        mock_threshold.assert_called_once() # 验证二值化
-        mock_call_llm_ocr.assert_called_once_with("binary_image")
+        # 模拟_check_api_connectivity方法
+        with patch('core.ocr_processor.OCRProcessor._check_api_connectivity', return_value=True):
+            # 创建处理器
+            processor = OCRProcessor(self.config)
+            
+            # 调用OCR处理
+            result = processor.ocr_page(self.test_image)
+            
+            # 验证结果
+            self.assertEqual(result, mock_result)
+            self.assertEqual(processor.total_tokens, 100)
+            
+            # 验证调用
+            mock_call_llm_ocr.assert_called_once_with(self.test_image)
     
     @patch('core.ocr_processor.OCRProcessor._call_llm_ocr')
     def test_batch_process(self, mock_call_llm_ocr):
-        """测试批量处理"""
-        # 设置模拟对象
-        mock_call_llm_ocr.return_value = {"text": "Batch text"}
+        """测试批量处理多个图像"""
+        # 模拟OCR结果
+        mock_result1 = {
+            'text': '测试文本1',
+            'confidence': 0.9,
+            'blocks': [],
+            'language': {'code': 'zh-CN', 'name': '简体中文'},
+            'token_usage': 100
+        }
+        mock_result2 = {
+            'text': '测试文本2',
+            'confidence': 0.9,
+            'blocks': [],
+            'language': {'code': 'zh-CN', 'name': '简体中文'},
+            'token_usage': 150
+        }
+        mock_call_llm_ocr.side_effect = [mock_result1, mock_result2]
         
-        # 初始化处理器
-        processor = OCRProcessor(
-            model_name=self.model_name,
-            batch_size=3
-        )
-        
-        # 准备测试数据
-        images = [self.test_image] * 5  # 5个图像，需要2批处理
-        
-        # 批量处理
-        results = processor.batch_process(images)
-        
-        # 验证
-        self.assertEqual(len(results), 5)
-        for result in results:
-            self.assertEqual(result["text"], "Batch text")
-        
-        # 验证LLM调用次数（应该是5次，因为我们模拟每个图像单独处理）
-        self.assertEqual(mock_call_llm_ocr.call_count, 5)
+        # 模拟_check_api_connectivity方法
+        with patch('core.ocr_processor.OCRProcessor._check_api_connectivity', return_value=True):
+            # 创建处理器
+            processor = OCRProcessor(self.config)
+            
+            # 创建测试图像列表
+            images = [self.test_image, self.test_image]
+            
+            # 调用批量处理
+            results = processor.batch_process(images)
+            
+            # 验证结果
+            self.assertEqual(len(results), 2)
+            self.assertEqual(results[0], mock_result1)
+            self.assertEqual(results[1], mock_result2)
+            self.assertEqual(processor.total_tokens, 250)
+            
+            # 验证调用次数
+            self.assertEqual(mock_call_llm_ocr.call_count, 2)
     
     @patch('core.ocr_processor.OCRProcessor._call_llm_ocr')
-    def test_handle_complex_layout(self, mock_call_llm_ocr):
-        """测试处理复杂布局"""
-        # 模拟LLM返回的复杂布局结果
-        mock_call_llm_ocr.return_value = {
-            "text": "Title\nParagraph 1\nTable: data1 data2\nFootnote",
-            "confidence": 0.9,
-            "layout": {
-                "title": {"text": "Title", "bbox": [100, 50, 300, 80]},
-                "paragraphs": [
-                    {"text": "Paragraph 1", "bbox": [100, 100, 500, 150]}
-                ],
-                "tables": [
-                    {
-                        "bbox": [100, 200, 500, 250],
-                        "cells": [
-                            {"text": "data1", "bbox": [100, 200, 300, 250]},
-                            {"text": "data2", "bbox": [300, 200, 500, 250]}
-                        ]
-                    }
-                ],
-                "footnotes": [
-                    {"text": "Footnote", "bbox": [100, 300, 300, 320]}
-                ]
-            }
+    def test_preprocess_enabled(self, mock_call_llm_ocr):
+        """测试启用预处理"""
+        # 模拟OCR结果
+        mock_result = {
+            'text': '测试文本',
+            'confidence': 0.9,
+            'blocks': [],
+            'language': {'code': 'zh-CN', 'name': '简体中文'},
+            'token_usage': 100
         }
+        mock_call_llm_ocr.return_value = mock_result
         
-        # 初始化处理器
-        processor = OCRProcessor(model_name=self.model_name)
+        # 更新配置启用预处理
+        self.config['ocr']['preprocess'] = 'True'
         
-        # 处理页面
-        result = processor.ocr_page(self.test_image)
-        
-        # 验证
-        self.assertEqual(result["text"], "Title\nParagraph 1\nTable: data1 data2\nFootnote")
-        self.assertEqual(result["confidence"], 0.9)
-        self.assertTrue("layout" in result)
-        self.assertEqual(result["layout"]["title"]["text"], "Title")
-        self.assertEqual(len(result["layout"]["paragraphs"]), 1)
-        self.assertEqual(len(result["layout"]["tables"]), 1)
-        self.assertEqual(len(result["layout"]["tables"][0]["cells"]), 2)
+        # 模拟_check_api_connectivity和_preprocess_image方法
+        with patch('core.ocr_processor.OCRProcessor._check_api_connectivity', return_value=True), \
+             patch('core.ocr_processor.OCRProcessor._preprocess_image', return_value=self.test_image) as mock_preprocess:
+            
+            # 创建处理器
+            processor = OCRProcessor(self.config)
+            
+            # 调用OCR处理
+            result = processor.ocr_page(self.test_image)
+            
+            # 验证预处理被调用
+            mock_preprocess.assert_called_once_with(self.test_image)
+            
+            # 验证结果
+            self.assertEqual(result, mock_result)
     
     @patch('core.ocr_processor.OCRProcessor._call_llm_ocr')
-    def test_language_detection(self, mock_call_llm_ocr):
-        """测试语言检测"""
-        # 模拟LLM返回的多语言结果
-        mock_call_llm_ocr.return_value = {
-            "text": "这是中文文本 This is English text",
-            "confidence": 0.95,
-            "language": {
-                "zh": 0.6,  # 60% 中文
-                "en": 0.4   # 40% 英文
-            }
+    def test_retry_mechanism(self, mock_call_llm_ocr):
+        """测试重试机制"""
+        # 模拟OCR结果和异常
+        mock_result = {
+            'text': '测试文本',
+            'confidence': 0.9,
+            'blocks': [],
+            'language': {'code': 'zh-CN', 'name': '简体中文'},
+            'token_usage': 100
         }
+        mock_call_llm_ocr.side_effect = [Exception("测试异常"), mock_result]
         
-        # 初始化处理器
-        processor = OCRProcessor(model_name=self.model_name)
+        # 模拟_check_api_connectivity方法和time.sleep
+        with patch('core.ocr_processor.OCRProcessor._check_api_connectivity', return_value=True), \
+             patch('time.sleep') as mock_sleep:
+            
+            # 创建处理器
+            processor = OCRProcessor(self.config)
+            
+            # 调用OCR处理
+            result = processor.ocr_page(self.test_image)
+            
+            # 验证重试
+            self.assertEqual(mock_call_llm_ocr.call_count, 2)
+            self.assertEqual(result, mock_result)
+            mock_sleep.assert_called_once()
+    
+    @patch('core.ocr_processor.OCRProcessor._call_llm_ocr')
+    def test_token_usage_tracking(self, mock_call_llm_ocr):
+        """测试token使用情况跟踪功能"""
+        # 创建模拟日志记录器
+        mock_logger = MagicMock()
         
-        # 处理页面
-        result = processor.ocr_page(self.test_image)
+        # 模拟多次OCR调用的结果
+        mock_results = [
+            {
+                'text': '第一页测试文本',
+                'confidence': 0.9,
+                'blocks': [],
+                'language': {'code': 'zh-CN', 'name': '简体中文'},
+                'token_usage': 120
+            },
+            {
+                'text': '第二页测试文本',
+                'confidence': 0.85,
+                'blocks': [],
+                'language': {'code': 'zh-CN', 'name': '简体中文'},
+                'token_usage': 150
+            },
+            {
+                'text': '第三页测试文本',
+                'confidence': 0.95,
+                'blocks': [],
+                'language': {'code': 'zh-CN', 'name': '简体中文'},
+                'token_usage': 180
+            }
+        ]
+        mock_call_llm_ocr.side_effect = mock_results
         
-        # 验证
-        self.assertEqual(result["text"], "这是中文文本 This is English text")
-        self.assertTrue("language" in result)
-        self.assertEqual(result["language"]["zh"], 0.6)
-        self.assertEqual(result["language"]["en"], 0.4)
+        # 模拟_check_api_connectivity方法
+        with patch('core.ocr_processor.OCRProcessor._check_api_connectivity', return_value=True):
+            # 创建处理器
+            processor = OCRProcessor(self.config, logger=mock_logger)
+            
+            # 初始token计数应为0
+            self.assertEqual(processor.total_tokens, 0)
+            
+            # 第一次OCR调用
+            result1 = processor.ocr_page(self.test_image)
+            self.assertEqual(result1['token_usage'], 120)
+            self.assertEqual(processor.total_tokens, 120)
+            
+            # 第二次OCR调用
+            result2 = processor.ocr_page(self.test_image)
+            self.assertEqual(result2['token_usage'], 150)
+            self.assertEqual(processor.total_tokens, 270)  # 120 + 150
+            
+            # 第三次OCR调用
+            result3 = processor.ocr_page(self.test_image)
+            self.assertEqual(result3['token_usage'], 180)
+            self.assertEqual(processor.total_tokens, 450)  # 120 + 150 + 180
+            
+            # 验证日志记录
+            mock_logger.debug.assert_any_call(f"🔢 累计token使用量: 450")
+    
+    @patch('core.ocr_processor.OCRProcessor._call_llm_ocr')
+    def test_token_usage_with_missing_data(self, mock_call_llm_ocr):
+        """测试当OCR结果中缺少token使用数据时的处理"""
+        # 模拟OCR结果，缺少token_usage字段
+        mock_result_no_tokens = {
+            'text': '测试文本',
+            'confidence': 0.9,
+            'blocks': [],
+            'language': {'code': 'zh-CN', 'name': '简体中文'}
+            # 故意缺少token_usage字段
+        }
+        mock_call_llm_ocr.return_value = mock_result_no_tokens
         
-        # 验证主要语言
-        self.assertEqual(processor.detect_primary_language(result), "zh")
-
-    def test_dashscope_ocr(self):
-        """Test OCR with dashscope.aliyuncs.com API"""
-        try:
-            from openai import OpenAI
-        except ImportError:
-            self.skipTest("openai package not installed")
-
-        api_key = os.getenv("DASHSCOPE_API_KEY")
-        if not api_key:
-            self.skipTest("DASHSCOPE_API_KEY environment variable not set")
-
-        client = OpenAI(
-            api_key=api_key,
-            base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
-        )
-
-        try:
-            completion = client.chat.completions.create(
-                model="qwen-vl-max-latest",
-                messages=[
-                    {
-                        "role": "system",
-                        "content": [{"type": "text", "text": "You are a helpful assistant."}],
-                    },
-                    {
-                        "role": "user",
-                        "content": [
-                            {
-                                "type": "image_url",
-                                "image_url": {
-                                    "url": "https://help-static-aliyun-doc.aliyuncs.com/file-manage-files/zh-CN/20241022/emyrja/dog_and_girl.jpeg"
-                                },
-                            },
-                            {"type": "text", "text": "图中描绘的是什么景象?"},
-                        ],
-                    },
-                ],
-            )
-
-            self.assertIsNotNone(completion.choices[0].message.content)
-            self.assertGreater(len(completion.choices[0].message.content), 0)
-
-        except Exception as e:
-            self.fail(f"dashscope.aliyuncs.com API call failed: {e}")
+        # 模拟_check_api_connectivity方法
+        with patch('core.ocr_processor.OCRProcessor._check_api_connectivity', return_value=True):
+            # 创建处理器
+            processor = OCRProcessor(self.config)
+            
+            # 初始token计数应为0
+            self.assertEqual(processor.total_tokens, 0)
+            
+            # 调用OCR处理
+            result = processor.ocr_page(self.test_image)
+            
+            # 验证结果和token计数
+            self.assertEqual(result, mock_result_no_tokens)
+            self.assertEqual(processor.total_tokens, 0)  # 应该保持为0，因为没有token使用数据
+    
+    @patch('core.ocr_processor.OCRProcessor._call_llm_ocr')
+    def test_max_retry_exceeded(self, mock_call_llm_ocr):
+        """测试超过最大重试次数"""
+        # 设置重试次数为2
+        self.config['ocr']['retry_count'] = '2'
+        
+        # 模拟连续异常
+        test_exception = Exception("测试异常")
+        mock_call_llm_ocr.side_effect = [test_exception, test_exception]
+        
+        # 模拟_check_api_connectivity方法和time.sleep
+        with patch('core.ocr_processor.OCRProcessor._check_api_connectivity', return_value=True), \
+             patch('time.sleep'):
+            
+            # 创建处理器
+            processor = OCRProcessor(self.config)
+            
+            # 验证异常被抛出
+            with self.assertRaises(Exception):
+                processor.ocr_page(self.test_image)
+            
+            # 验证调用次数
+            self.assertEqual(mock_call_llm_ocr.call_count, 2)
+    
+    def test_detect_primary_language(self):
+        """测试检测主要语言"""
+        # 模拟_check_api_connectivity方法
+        with patch('core.ocr_processor.OCRProcessor._check_api_connectivity', return_value=True):
+            # 创建处理器
+            processor = OCRProcessor(self.config)
+            
+            # 测试有语言信息的情况
+            ocr_result = {
+                'language': {
+                    'zh-CN': 0.9,
+                    'en': 0.1
+                }
+            }
+            self.assertEqual(processor.detect_primary_language(ocr_result), 'zh-CN')
+            
+            # 测试无语言信息的情况
+            ocr_result = {}
+            self.assertEqual(processor.detect_primary_language(ocr_result), 'unknown')
+            
+            # 测试空语言信息的情况
+            ocr_result = {'language': {}}
+            self.assertEqual(processor.detect_primary_language(ocr_result), 'unknown')
 
 
 if __name__ == '__main__':

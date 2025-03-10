@@ -72,9 +72,22 @@ def convert_pdf_to_epub(pdf_path, epub_path, max_pages=20):
     if not os.path.exists(temp_dir):
         os.makedirs(temp_dir)
     
+    # 创建配置对象
+    import configparser
+    config = configparser.ConfigParser()
+    config['ocr'] = {
+        'model_name': 'qwen-vl-max',
+        'timeout': '30',
+        'retry_count': '3',
+        'batch_size': '5',
+        'preprocess': 'True',
+        'api_url': 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+        'api_key': os.environ.get('DASHSCOPE_API_KEY', '')
+    }
+    
     # 初始化OCR处理器
     try:
-        ocr = OCRProcessor(preprocess=True)
+        ocr = OCRProcessor(config, logger)
         logger.info("成功初始化OCR处理器")
         use_ocr = True
     except Exception as e:
