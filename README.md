@@ -14,6 +14,15 @@ PDF2Epub是一个基于大模型OCR功能的PDF转EPUB工具，专为中文PDF�
 - 自动处理图像和表格
 - 支持断点续传和缓存
 - 可定制的样式和排版
+- 跨平台支持（Windows、Linux、macOS）
+
+## 系统要求
+
+- Python 3.8+
+- 支持的操作系统：
+  - Windows 10/11
+  - Linux (Ubuntu 20.04+, CentOS 8+, 等)
+  - macOS 11+
 
 ## 安装
 
@@ -135,6 +144,53 @@ python main.py input.pdf output.epub --resume
 ```
 
 程序会自动查找之前的处理记录，并从上次中断的位置继续处理。
+
+## 跨平台开发
+
+PDF2Epub设计为完全跨平台，可以在Windows、Linux和macOS上运行。以下是在不同平台上开发和使用的注意事项：
+
+### Linux环境
+
+在Linux上开发或运行PDF2Epub时，需要注意以下几点：
+
+1. **路径处理**：代码中使用了平台无关的路径处理方式（`os.path`），确保在不同操作系统上都能正确处理文件路径。
+
+2. **配置文件位置**：
+   - 在Linux上，配置文件会按以下顺序查找：
+     - `./config/settings.ini`（当前目录）
+     - `~/.config/pdf2epub/settings.ini`（用户目录）
+     - `/etc/pdf2epub/settings.ini`（系统目录）
+
+3. **依赖安装**：
+   ```bash
+   # Ubuntu/Debian
+   sudo apt-get update
+   sudo apt-get install python3-pip python3-opencv
+   pip3 install -r requirements.txt
+   
+   # CentOS/RHEL
+   sudo yum install python3-pip
+   sudo yum install opencv-python
+   pip3 install -r requirements.txt
+   ```
+
+4. **权限设置**：
+   ```bash
+   # 确保脚本可执行
+   chmod +x main.py
+   
+   # 运行
+   ./main.py input.pdf output.epub
+   ```
+
+### 文件路径兼容性
+
+为确保在不同平台上的兼容性，请遵循以下建议：
+
+- 使用相对路径而非绝对路径
+- 使用`os.path.join()`来连接路径组件
+- 使用`os.path.expanduser()`来处理用户目录（如`~`）
+- 避免使用平台特定的路径分隔符（如Windows的`\`或Linux的`/`）
 
 ## 配置文件
 
