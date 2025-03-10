@@ -292,7 +292,7 @@ def process_pdf(args, config, logger):
                 processed_text = cache['processed_text']
                 page_type = cache['page_type']
             else:
-                # 提取图像
+                # 获取页面图像
                 image_data = pdf_parser.extract_image(page_num)
                 
                 # 检查是否有文本层
@@ -302,13 +302,13 @@ def process_pdf(args, config, logger):
                     # 使用PDF文本层
                     text = pdf_parser.extract_text(page_num)
                     if args.verbose >= 1:
-                        logger.info(f" 处理页面 {page_num+1}/{page_count} (使用PDF文本层)")
+                        pass
                     else:
                         logger.debug(f"使用PDF文本层: 页码 {page_num+1}")
                 else:
                     # 使用OCR
                     if args.verbose >= 1:
-                        logger.info(f" 处理页面 {page_num+1}/{page_count} (使用OCR)")
+                        pass
                     else:
                         logger.debug(f"使用OCR: 页码 {page_num+1}")
                     
@@ -321,7 +321,7 @@ def process_pdf(args, config, logger):
                         total_tokens += tokens_used
                         total_pages_with_ocr += 1
                         if args.verbose >= 1:
-                            logger.info(f" 本页使用了 {tokens_used} tokens")
+                            pass
                 
                 # 处理页面
                 # 确保image_data是字节数据或OpenCV图像，而不是字典
@@ -350,9 +350,11 @@ def process_pdf(args, config, logger):
             # 更新进度条
             pbar.update(1)
             
-            # 更新进度条描述以显示token使用情况
+            # 更新进度条描述以显示token使用情况和当前页码
             if total_tokens > 0:
-                pbar.set_description(f" 转换进度 (已用tokens: {total_tokens})")
+                pbar.set_description(f" 转换进度 (页 {page_num+1}/{page_count}, 已用tokens: {total_tokens})")
+            else:
+                pbar.set_description(f" 转换进度 (页 {page_num+1}/{page_count})")
         
         # 关闭进度条
         pbar.close()
