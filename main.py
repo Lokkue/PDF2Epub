@@ -189,6 +189,50 @@ class ColoredFormatter(logging.Formatter):
         return super().format(record)
 
 
+def predict_page_type(image, text=None):
+    """
+    预测页面类型，用于OCR提示词优化
+    
+    参数:
+        image: 页面图像
+        text: 已有的文本内容（如果有）
+        
+    返回:
+        str: 页面类型（"text", "toc", "table", "footnote", "image_caption", "academic"）
+    """
+    # 如果已有文本，基于文本内容进行简单规则判断
+    if text and len(text) > 10:
+        # 检测目录页
+        if "目录" in text[:100] or "CONTENTS" in text[:100].upper() or "索引" in text[:100]:
+            return "toc"
+        
+        # 检测表格页
+        table_markers = ["表", "Table", "表格", "一览表"]
+        if any(marker in text[:200] for marker in table_markers) and sum(c.isdigit() for c in text[:200]) > 5:
+            return "table"
+        
+        # 检测脚注页
+        footnote_markers = ["注:", "注：", "[1]", "[2]", "①", "②", "(1)", "(2)"]
+        if sum(marker in text for marker in footnote_markers) >= 2:
+            return "footnote"
+        
+        # 检测图片说明页
+        image_markers = ["图", "Fig.", "图片", "插图"]
+        if any(marker in text[:200] for marker in image_markers) and any(f"图{i}" in text[:200] for i in range(1, 10)):
+            return "image_caption"
+        
+        # 检测学术文献页
+        academic_markers = ["引用", "参考文献", "Abstract", "摘要", "关键词", "Keywords"]
+        if any(marker in text for marker in academic_markers):
+            return "academic"
+    
+    # 基于图像特征进行简单判断（这里可以添加更复杂的图像分析）
+    # 例如，检测表格线条、检测图片区域等
+    
+    # 默认为普通文本
+    return "text"
+
+
 def process_pdf(args, config, logger):
     """
     处理PDF文件
@@ -312,7 +356,13 @@ def process_pdf(args, config, logger):
                     else:
                         logger.debug(f"使用OCR: 页码 {page_num+1}")
                     
-                    ocr_result = ocr_processor.ocr_page(image_data)
+                    # 预测页面类型（用于OCR提示词优化）
+                    predicted_page_type = "text"  # 默认为普通文本
+                    if text:
+                        predicted_page_type = predict_page_type(image_data, text)
+                    
+                    # 调用OCR处理器，传递预测的页面类型
+                    ocr_result = ocr_processor.ocr_page(image_data, predicted_page_type)
                     text = ocr_result.get('text', '')
                     
                     # 累计token使用量
@@ -322,6 +372,11 @@ def process_pdf(args, config, logger):
                         total_pages_with_ocr += 1
                         if args.verbose >= 1:
                             pass
+                    
+                    # 更新页面类型预测（基于OCR结果）
+                    if not predicted_page_type or predicted_page_type == "text":
+                        predicted_page_type = predict_page_type(image_data, text)
+                        logger.debug(f"页面类型预测: {predicted_page_type}")
                 
                 # 处理页面
                 # 确保image_data是字节数据或OpenCV图像，而不是字典

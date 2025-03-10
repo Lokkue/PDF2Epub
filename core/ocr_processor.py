@@ -117,12 +117,13 @@ class OCRProcessor:
             self.logger.warning(f"OCR API连通性检查失败: {e}")
             return False
     
-    def ocr_page(self, image):
+    def ocr_page(self, image, page_type="text"):
         """
         OCR处理单页图像
         
         参数:
             image: 图像数据（NumPy数组或字节流）
+            page_type: 页面类型（text, toc, table, footnote, image_caption等）
             
         返回:
             dict: OCR结果，包含文本、置信度等信息
@@ -134,10 +135,10 @@ class OCRProcessor:
         # 重试机制
         for attempt in range(self.retry_count):
             try:
-                self.logger.debug(f"OCR处理尝试 {attempt+1}/{self.retry_count}")
+                self.logger.debug(f"OCR处理尝试 {attempt+1}/{self.retry_count}, 页面类型: {page_type}")
                 
-                # 调用大模型OCR
-                result = self._call_llm_ocr(image)
+                # 调用大模型OCR，传递页面类型
+                result = self._call_llm_ocr(image, page_type)
                 
                 # 记录文本长度
                 text_length = len(result.get('text', ''))
@@ -211,17 +212,18 @@ class OCRProcessor:
         
         return binary
     
-    def _call_llm_ocr(self, image):
+    def _call_llm_ocr(self, image, page_type="text"):
         """
         调用大模型OCR功能
         
         参数:
             image: 图像数据
+            page_type: 页面类型（text, toc, table, footnote, image_caption等）
             
         返回:
             dict: OCR结果
         """
-        self.logger.debug(f"使用OpenAI兼容接口调用阿里云OCR服务")
+        self.logger.debug(f"使用OpenAI兼容接口调用阿里云OCR服务，页面类型: {page_type}")
         
         try:
             from openai import OpenAI
@@ -274,6 +276,29 @@ class OCRProcessor:
                 base64_image = encode_image(temp_image_path)
                 self.logger.debug(f"图像已转换为base64编码")
                 
+                # 根据页面类型选择提示词
+                system_prompts = {
+                    "text": "你是一个专业的OCR助手，请识别图片中的所有文字内容。请特别注意：1) 保持原有段落格式；2) 正确识别标题层级；3) 保留列表编号和缩进；4) 识别脚注并标记；5) 区分正文与引用文本。",
+                    "toc": "你是一个专业的OCR助手，这是一个目录页面。请识别所有目录条目，保持原有层级结构和页码。格式应为'标题 页码'，并保持缩进表示层级关系。",
+                    "table": "你是一个专业的OCR助手，这是一个包含表格的页面。请识别表格内容并以制表符分隔的格式输出，保持行列结构。表格外的文字请单独段落输出。",
+                    "footnote": "你是一个专业的OCR助手，请识别正文和脚注。对于脚注，请使用格式'[n] 脚注内容'，其中n是脚注编号。",
+                    "image_caption": "你是一个专业的OCR助手，请识别图片及其说明文字。对于图片说明，请使用格式'图n: 说明内容'。",
+                    "academic": "你是一个专业的OCR助手，这是一个学术文献页面。请识别所有文字内容，保持原有格式，并特别注意：1) 正确识别标题和小标题；2) 保持段落结构；3) 正确处理引用和参考文献；4) 将脚注标记为上标并保留脚注内容；5) 保持公式和特殊符号的完整性。"
+                }
+                
+                user_prompts = {
+                    "text": "请识别这张图片中的所有文字内容，保持原有段落格式，正确识别标题层级，保留列表编号和缩进。",
+                    "toc": "这是一个目录页面，请识别所有目录条目，保持原有层级结构和页码。",
+                    "table": "这是一个包含表格的页面，请识别表格内容并保持行列结构，表格外的文字请单独段落输出。",
+                    "footnote": "请识别正文和脚注，对于脚注，请使用格式'[n] 脚注内容'。",
+                    "image_caption": "请识别图片及其说明文字，对于图片说明，请使用格式'图n: 说明内容'。",
+                    "academic": "这是一个学术文献页面，请识别所有文字内容，保持原有格式，正确处理标题、段落、引用、脚注和公式。"
+                }
+                
+                # 获取当前页面类型的提示词，如果不存在则使用默认文本提示词
+                system_prompt = system_prompts.get(page_type, system_prompts["text"])
+                user_prompt = user_prompts.get(page_type, user_prompts["text"])
+                
                 # 创建OpenAI客户端
                 client = OpenAI(
                     api_key=self.api_key,
@@ -284,7 +309,7 @@ class OCRProcessor:
                 messages = [
                     {
                         "role": "system",
-                        "content": [{"type": "text", "text": "你是一个专业的OCR助手，请识别图片中的所有文字内容，保持原有格式。"}]
+                        "content": [{"type": "text", "text": system_prompt}]
                     },
                     {
                         "role": "user",
@@ -293,7 +318,7 @@ class OCRProcessor:
                                 "type": "image_url",
                                 "image_url": {"url": f"data:image/png;base64,{base64_image}"}
                             },
-                            {"type": "text", "text": "请识别这张图片中的所有文字内容，保持原有格式。"}
+                            {"type": "text", "text": user_prompt}
                         ]
                     }
                 ]
